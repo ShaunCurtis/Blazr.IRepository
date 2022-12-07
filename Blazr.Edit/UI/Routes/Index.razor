@@ -1,0 +1,45 @@
+﻿@page "/"
+@page "/Index"
+@inject NavigationManager NavManager
+@inject WeatherForecastListService ForecastService
+
+<PageTitle>Weather forecast</PageTitle>
+
+<h1>Weather forecast</h1>
+
+<p>This component demonstrates fetching data from a service.</p>
+
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Uid</th>
+                <th>Date</th>
+                <th>Temp. (C)</th>
+                <th>Summary</th>
+            </tr>
+        </thead>
+        <tbody>
+            <Virtualize Context="forecast" ItemsProvider="this.ForecastService.GetForecastsAsync">
+                <ItemContent>
+                <tr>
+                    <td>@forecast.Uid</td>
+                    <td>@forecast.Date.ToShortDateString()</td>
+                    <td>@forecast.TemperatureC</td>
+                    <td>@forecast.Summary</td>
+                    <td><button class="btn btn-sm btn-danger" @onclick="() => EditRecord(forecast.Uid)">Edit</button></td>
+                </tr>
+                </ItemContent>
+                <Placeholder>
+                <tr>
+                    <td colspan="5">Loading...</td>
+                </tr>
+                </Placeholder>
+            </Virtualize>
+        </tbody>
+    </table>
+
+@code {
+
+    private void EditRecord(Guid id)
+        => this.NavManager.NavigateTo($"/edit/{id}");
+}

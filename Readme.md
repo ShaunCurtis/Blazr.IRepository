@@ -1,4 +1,5 @@
-# Building a VERY Generic IRepository Data Pipeline
+# Rethinking the Repository Pattern
+
 
 ## Introduction
 
@@ -23,17 +24,25 @@ How so:
 
 4. It implements some good CQS practices and patterns.
 
+## Nomenclature and Terminology
+
+ - **DI**: Dependancy Injection 
+ - **CQS**: Command/Query Separation 
+
+## Repo
+
+The Repo and latest version of this article is here: [Blazr.IREpository](https://github.com/ShaunCurtis/Blazr.IRepository).
+
 ## The Data Store
 
 The solution needs a real data store for testing: it implements an Entity Framework In-Memory database.
 
-As I'm a Blazor developer my data class is the good old `WeatherForecast`. The details are in the Appendix.
+As I'm a Blazor developer, my data class is the good old `WeatherForecast`. The code for and details of the data store are in the Appendix.
 
-Here's the `DbContext`.
+Here's the `DbContext` used by the DBContext factory.
 
 ```csharp
-public class InMemoryWeatherDbContext
-    : DbContext
+public class InMemoryWeatherDbContext : DbContext
 {
     public DbSet<WeatherForecast> WeatherForecast { get; set; } = default!;
     public InMemoryWeatherDbContext(DbContextOptions<InMemoryWeatherDbContext> options) : base(options) { }
@@ -45,10 +54,11 @@ public class InMemoryWeatherDbContext
 
 ### Testing the Factory and Context
 
-The following test sets up a DI container, loads the data from the Test Provider, and tests:
-
-1. The record count is correct
-2. One arbitary record is correct.
+The following test demonstrates the basic datastore setup in DI. It:
+1. Sets up a DI container
+2. Loads the data from the Test Provider
+3. Tests the record count is correct
+4. Tests one arbitary record is correct.
 
 ```csharp
 [Fact]
@@ -87,6 +97,7 @@ public async Task DBContextTest()
     var record = await dbContext.Set<WeatherForecast>().SingleOrDefaultAsync(item => item.Uid.Equals(testRecord.Uid));
     Assert.Equal(testRecord, record);
 
+    // Dispose of the resources correctly
     providerScope.Dispose();
     rootProvider.Dispose();
 }
@@ -94,14 +105,7 @@ public async Task DBContextTest()
 
 ## The Classic Implementation
 
-Here's a nice succinct implementation.  
-
-What's wrong:
-
-1. What happens when a `null` is returned, what does it mean?
-2. Did that add/update/delete succeed?
-3. How do you handle cancellation tokens?
-4. What happens when your DBset contains a million records (maybe because the DBA got something wrong last night)?
+Here's a nice succinct implementation that I found on the Internet.
 
 ```csharp
     public abstract class Repository<T> : IRepository<T> where T : class
@@ -128,11 +132,23 @@ What's wrong:
     }
 }
 ```
+Let's take a look at it:
+
+1. What happens when a `null` is returned, what does it mean?
+2. Did that add/update/delete really succeed?  How do I know?
+3. How do you handle cancellation tokens?  Most of the async methods now accept a cancellation token.
+4. What happens when your DBset contains a million records (maybe because the DBA got something wrong last night)?
+5. .....
+
 ## The new Implementation
+
+Another data pipeline implementation is CQS.  It's more verbose than the Repository pattern, but it implements some key good practices that we should use.
 
 ### Requests and Results
 
 We need some request and result objects to encapulate what we are requesting and the results ans status information we expect back.  Everything is a record: defined once and then consumed.
+
+We can define a command like this:
 
 #### Commands
 
@@ -145,7 +161,7 @@ public record CommandRequest<TRecord>
     public CancellationToken Cancellation { get; set; } = new ();
 }
 ```
-They only return status information: no data.
+Handlers for commands only return status information: no data.  We can define the result like this:
 
 ```csharp
 public record CommandResult
@@ -165,7 +181,7 @@ public record CommandResult
 
 #### Item Requests
 
-*Queries* are requests to get data from the data store: no mutation. 
+*Queries* are requests to get data from the data store: no mutation.  We can define an item query like this:
 
 ```csharp
 public record ItemQueryRequest
@@ -175,7 +191,7 @@ public record ItemQueryRequest
 }
 ```
 
-They return data and status.
+And the return by the handler: the requested data and status.
 
 ```csharp
 public record ItemQueryResult<TRecord>
@@ -213,7 +229,7 @@ public record ListQueryRequest<TRecord>
 }
 ```
 
-The result returns the items, and the count of total items in the table/view.  `Items` is returned as an `IEnumerable`.
+The result returns the items, and the count of total items in the table/view.  `Items` are always returned as `IEnumerable`.
 
 ```csharp
 public record ListQueryResult<TRecord>
@@ -358,7 +374,7 @@ And implementation.
 
 Note there are two internal methods:
 
-1. `_getItemsAsync` Gets the items.  This builds an `IQueryable` object and returns it as an un-materialized IEnumerable.  It will only get executed when enumerated.
+1. `_getItemsAsync` Gets the items.  This builds an `IQueryable` object and returns it as an un-materialized `IEnumerable`.  It only gets executed when enumerated.
 2. `_getCountAsync` Gets the count of all the records based on the filter.
 
 ```csharp
@@ -427,7 +443,7 @@ public class ListRequestHandler<TDbContext> : IListRequestHandler
     }
 }
 ```
-### The Repository Replacement
+### The Repository Class Replacement
 
 First the interface.
 
@@ -488,7 +504,7 @@ public class RepositoryDataBroker : IDataBroker
 
 ## Testing the Data Broker
 
-We can now define a set of tests to test the data broker.  I've included two here.  The rest are in the Repo.
+We can now define a set of tests for the data broker.  I've included two here.  The rest are in the Repo.
 
 First two methods to create our root DI container and populate the database.
 
@@ -617,13 +633,11 @@ public async Task AddItemTest()
 }
 ```
 
+Wrapping Up
 
-```csharp
-```
+What I've presented here is a Repository Pattern hybrid.  It maintains the simplicity of the Repository Pattern, but applies some of the best bits of the CQS Pattern.  Abstracting the actual nitty-gritty EF and Linq code to individual handlers keeps the classes small, succinct and single purpose.
 
-
-```csharp
-```
+The single Data Broker simplifies data access for the Core and Presentation domain code.
 
 ## Appendix
 

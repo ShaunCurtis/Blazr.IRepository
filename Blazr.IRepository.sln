@@ -3,20 +3,18 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.3.32811.315
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blazr.Edit", "Blazr.Edit\Blazr.Edit.csproj", "{10DE4F22-EE68-4C09-915B-D9A8355790F3}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{FEC063BB-7E10-449B-BA5A-EA0A19906782}"
 	ProjectSection(SolutionItems) = preProject
 		Readme.md = Readme.md
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Blazr.Infrastructure", "Blazr.Infrastructure\Blazr.Infrastructure.csproj", "{1670411C-FF1A-4CC6-9740-464037C4389B}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blazr.Infrastructure", "Blazr.Infrastructure\Blazr.Infrastructure.csproj", "{1670411C-FF1A-4CC6-9740-464037C4389B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Blazr.Core", "Blazr.Core\Blazr.Core.csproj", "{FD1E94FE-40FA-4DF4-8EB5-7786E73E28D2}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blazr.Core", "Blazr.Core\Blazr.Core.csproj", "{FD1E94FE-40FA-4DF4-8EB5-7786E73E28D2}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Blazr.Test", "Blazr.Test\Blazr.Test.csproj", "{305BEE5F-30E2-41DE-A394-8ABA70785B7F}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blazr.Test", "Blazr.Test\Blazr.Test.csproj", "{305BEE5F-30E2-41DE-A394-8ABA70785B7F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Application", "Application\Application.csproj", "{F998BEB3-803A-4F06-8253-8E2DAC4F1D71}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Application", "Application\Application.csproj", "{F998BEB3-803A-4F06-8253-8E2DAC4F1D71}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -24,10 +22,6 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{10DE4F22-EE68-4C09-915B-D9A8355790F3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{10DE4F22-EE68-4C09-915B-D9A8355790F3}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{10DE4F22-EE68-4C09-915B-D9A8355790F3}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{10DE4F22-EE68-4C09-915B-D9A8355790F3}.Release|Any CPU.Build.0 = Release|Any CPU
 		{1670411C-FF1A-4CC6-9740-464037C4389B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{1670411C-FF1A-4CC6-9740-464037C4389B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1670411C-FF1A-4CC6-9740-464037C4389B}.Release|Any CPU.ActiveCfg = Release|Any CPU

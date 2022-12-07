@@ -22,7 +22,7 @@ public class DeleteRequestHandler<TDbContext>
         using var dbContext = _factory.CreateDbContext();
 
         dbContext.Remove<TRecord>(request.Item);
-        return await dbContext.SaveChangesAsync() == 1
+        return await dbContext.SaveChangesAsync(request.Cancellation) == 1
             ? CommandResult.Success("Record Deleted")
             : CommandResult.Failure("Error deleting Record");
     }

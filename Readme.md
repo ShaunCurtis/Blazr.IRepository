@@ -2,7 +2,9 @@
 
 ## Introduction
 
-This is not an regurgitation of how you build the classic `IRepository` in DotNetCore.  The version presented here is a very different animal.  How so:
+This is not an regurgitation of how to build the classic `IRepository` in DotNetCore.  The version presented here is a very different animal.
+
+How so:
 
 1. There's no implementation per entity class.  You won't see this:
 
@@ -15,13 +17,617 @@ This is not an regurgitation of how you build the classic `IRepository` in DotNe
     public interface IProductRepository : IGenericRepository<WeatherForecast> { }
 ```
 
-2. There's no separate `UnitOfWork` classes, it's built in.
+2. There's no separate `UnitOfWork` classes: it's built in.
 
-3. All standard Data I/O goes through a single Data Broker.
+3. All standard Data I/O uses a single Data Broker.
 
-4. Some aspects of CQS are implemented.
+4. It implements some good CQS practices and patterns.
 
 ## The Data Store
+
+The solution needs a real data store for testing: it implements an Entity Framework In-Memory database.
+
+As I'm a Blazor developer my data class is the good old `WeatherForecast`. The details are in the Appendix.
+
+Here's the `DbContext`.
+
+```csharp
+public class InMemoryWeatherDbContext
+    : DbContext
+{
+    public DbSet<WeatherForecast> WeatherForecast { get; set; } = default!;
+    public InMemoryWeatherDbContext(DbContextOptions<InMemoryWeatherDbContext> options) : base(options) { }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+        => modelBuilder.Entity<WeatherForecast>().ToTable("WeatherForecast");
+}
+```
+
+### Testing the Factory and Context
+
+The following test sets up a DI container, loads the data from the Test Provider, and tests:
+
+1. The record count is correct
+2. One arbitary record is correct.
+
+```csharp
+[Fact]
+public async Task DBContextTest()
+{
+    // Gets the control test data
+    var testProvider = WeatherTestDataProvider.Instance();
+
+    // Build our services container
+    var services = new ServiceCollection();
+
+    // Define the DbSet and Server Type for the DbContext Factory
+    services.AddDbContextFactory<InMemoryWeatherDbContext>(options
+        => options.UseInMemoryDatabase($"WeatherDatabase-{Guid.NewGuid().ToString()}"));
+
+    var rootProvider = services.BuildServiceProvider();
+
+    //define a scoped container
+    var providerScope = rootProvider.CreateScope();
+    var provider = providerScope.ServiceProvider;
+
+    // get the DbContext factory and add the test data
+    var factory = provider.GetService<IDbContextFactory<InMemoryWeatherDbContext>>();
+    if (factory is not null)
+        WeatherTestDataProvider.Instance().LoadDbContext<InMemoryWeatherDbContext>(factory);
+
+    // Check the data has been loaded
+    var dbContext = factory!.CreateDbContext();
+    Assert.NotNull(dbContext);
+
+    var count = dbContext.Set<WeatherForecast>().Count();
+    Assert.Equal(testProvider.WeatherForecasts.Count(), count);
+
+    // Test an arbitary record
+    var testRecord = testProvider.GetRandomRecord()!;
+    var record = await dbContext.Set<WeatherForecast>().SingleOrDefaultAsync(item => item.Uid.Equals(testRecord.Uid));
+    Assert.Equal(testRecord, record);
+
+    providerScope.Dispose();
+    rootProvider.Dispose();
+}
+```
+
+## The Classic Implementation
+
+Here's a nice succinct implementation.  
+
+What's wrong:
+
+1. What happens when a `null` is returned, what does it mean?
+2. Did that add/update/delete succeed?
+3. How do you handle cancellation tokens?
+4. What happens when your DBset contains a million records (maybe because the DBA got something wrong last night)?
+
+```csharp
+    public abstract class Repository<T> : IRepository<T> where T : class
+    {
+        protected readonly DbContextClass _dbContext;
+
+        protected GenericRepository(DbContextClass context)
+            => _dbContext = context;
+
+        public async Task<T> GetById(int id)
+            => await _dbContext.Set<T>().FindAsync(id);
+
+        public async Task<IEnumerable<T>> GetAll()
+            => await _dbContext.Set<T>().ToListAsync();
+
+        public async Task Add(T entity)
+             => await _dbContext.Set<T>().AddAsync(entity);
+
+        public void Delete(T entity)
+            => _dbContext.Set<T>().Remove(entity);
+
+        public void Update(T entity)
+           =>  _dbContext.Set<T>().Update(entity);
+    }
+}
+```
+## The new Implementation
+
+### Requests and Results
+
+We need some request and result objects to encapulate what we are requesting and the results ans status information we expect back.  Everything is a record: defined once and then consumed.
+
+#### Commands
+
+*Commands* are requests to make a change to data store: the standard Create/Update/Delete operations.
+
+```csharp
+public record CommandRequest<TRecord>
+{
+    public required TRecord Item { get; init; }
+    public CancellationToken Cancellation { get; set; } = new ();
+}
+```
+They only return status information: no data.
+
+```csharp
+public record CommandResult
+{
+    public bool Successful { get; init; }
+    public string Message { get; init; } = string.Empty;
+
+    private CommandResult() { }
+
+    public static CommandResult Success(string? message = null)
+        => new CommandResult { Successful = true, Message= message ?? string.Empty };
+
+    public static CommandResult Failure(string message)
+        => new CommandResult { Message = message};
+}
+```
+
+#### Item Requests
+
+*Queries* are requests to get data from the data store: no mutation. 
+
+```csharp
+public record ItemQueryRequest
+{
+    public required Guid Uid { get; init; }
+    public CancellationToken Cancellation { get; set; } = new();
+}
+```
+
+They return data and status.
+
+```csharp
+public record ItemQueryResult<TRecord>
+{
+    public TRecord? Item { get; init;} 
+    public bool Successful { get; init; }
+    public string Message { get; init; } = string.Empty;
+
+    private ItemQueryResult() { }
+
+    public static ItemQueryResult<TRecord> Success(TRecord Item, string? message = null)
+        => new ItemQueryResult<TRecord> { Successful=true, Item= Item, Message= message ?? string.Empty };
+
+    public static ItemQueryResult<TRecord> Failure(string message)
+        => new ItemQueryResult<TRecord> { Message = message};
+}
+```
+
+#### List Queries
+
+List queries present a few extra challenges.
+
+1. They should never request everything.  In edge conditions there may be 1,000,000+ rows in a table.  Every request should be constrained.  The request defines `StartIndex` and `PageSize` to both constrain the data and provide functionality for paging operations.  If you set the page size to 1,000,000 will your data pipeline and front end handle it gracefully?
+2. They need to handle sorting and filtering.  The request defines these as Linq Expressions.
+
+```csharp
+public record ListQueryRequest<TRecord>
+{
+    public int StartIndex { get; init; } = 0;
+    public int PageSize { get; init; } = 1000;
+    public CancellationToken Cancellation { get; set; } = new ();
+    public bool SortDescending { get; } = false;
+    public Expression<Func<TRecord, bool>>? FilterExpression { get; init; }
+    public Expression<Func<TRecord, object>>? SortExpression { get; init; }
+}
+```
+
+The result returns the items, and the count of total items in the table/view.  `Items` is returned as an `IEnumerable`.
+
+```csharp
+public record ListQueryResult<TRecord>
+{
+    public IEnumerable<TRecord> Items { get; init;} = Enumerable.Empty<TRecord>();  
+    public bool Successful { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public long TotalCount { get; init; }
+
+    private ListQueryResult() { }
+
+    public static ListQueryResult<TRecord> Success(IEnumerable<TRecord> Items, long totalCount, string? message = null)
+        => new ListQueryResult<TRecord> {Successful=true,  Items= Items, TotalCount = totalCount, Message= message ?? string.Empty };
+
+    public static ListQueryResult<TRecord> Failure(string message)
+        => new ListQueryResult<TRecord> { Message = message};
+}
+```
+
+### Handlers
+
+Handlers are small single purpose classes that handle requests.  They abstract the nitty-gritty execution from the higher level Data Broker.
+
+#### Command Handlers
+
+The interface provides the abstraction.
+
+```csharp
+public interface ICreateRequestHandler
+{
+    public ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
+        where TRecord : class, new();
+}
+```
+
+And the implementation does the real work.
+
+1. Injects the DBContext Factory.
+2. Implements *Unit of Work* Db contexts through the DbContext factory.
+3. Uses the Add method on the context to add the record to EF.
+4. Calls `SaveChangesAsync`, passing in the Cancellation token, and expects a single change to be reported.
+5. Provides status information if things go wrong.
+
+```csharp
+public class CreateRequestHandler<TDbContext>
+    : ICreateRequestHandler
+    where TDbContext : DbContext
+{
+    private readonly IDbContextFactory<TDbContext> _factory;
+
+    public CreateRequestHandler(IDbContextFactory<TDbContext> factory)
+        => _factory = factory;
+
+    public async ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
+        where TRecord : class, new()
+    {
+        if (request == null)
+            throw new DataPipelineException($"No CommandRequest defined in {this.GetType().FullName}");
+
+        using var dbContext = _factory.CreateDbContext();
+
+        dbContext.Add<TRecord>(request.Item);
+        return await dbContext.SaveChangesAsync(request.Cancellation) == 1
+            ? CommandResult.Success("Record Updated")
+            : CommandResult.Failure("Error updating Record");
+    }
+}
+```
+
+The Update and Delete handlers are the same but use different `dbContext` methods: Update and Remove.
+
+#### Item Request Handler
+
+The interface.
+
+```csharp
+public interface IItemRequestHandler
+{
+    public ValueTask<ItemQueryResult<TRecord>> ExecuteAsync<TRecord>(ItemQueryRequest request)
+        where TRecord : class, new();
+}
+```
+
+And the server implementation. Note:
+
+1. Injects the DBContext Factory.
+2. Implements *Unit of Work* Db contexts through the DbContext factory.
+3. Turns off tracking.  There's no mutation involved in this transaction.
+4. Checks to see if it can use an Id to get the item - the record implements `IGuidIdentity`.
+5. If not, tries `FindAsync` which uses the inbuilt `Key` methodology to get the record.
+5. Provides status information if things go wrong.
+
+
+```csharp
+public class ItemRequestHandler<TDbContext>
+    : IItemRequestHandler
+    where TDbContext : DbContext
+{
+    private readonly IDbContextFactory<TDbContext> _factory;
+
+    public ItemRequestHandler(IDbContextFactory<TDbContext> factory)
+        => _factory = factory;
+
+    public async ValueTask<ItemQueryResult<TRecord>> ExecuteAsync<TRecord>(ItemQueryRequest request)
+        where TRecord : class, new()
+    {
+        if (request == null)
+            throw new DataPipelineException($"No ListQueryRequest defined in {this.GetType().FullName}");
+
+        using var dbContext = _factory.CreateDbContext();
+        dbContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+
+        TRecord? record = null;
+
+        // first check if the record implements IGuidIdentity.  If so we can do a cast and then do the query via the Uid property directly 
+        if ((new TRecord()) is IGuidIdentity)
+            record = await dbContext.Set<TRecord>().SingleOrDefaultAsync(item => ((IGuidIdentity)item).Uid == request.Uid, request.Cancellation);
+
+        // Try and use the EF FindAsync implementation
+        if (record is null)
+            record = await dbContext.FindAsync<TRecord>(request.Uid);
+
+        if (record is null)
+            return ItemQueryResult<TRecord>.Failure("No record retrieved");
+
+        return ItemQueryResult<TRecord>.Success(record);
+    }
+}
+```
+#### List Request Handler
+
+The interface.
+
+```csharp
+public interface IListRequestHandler
+{
+    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest<TRecord> request)
+        where TRecord : class, new();
+}
+```
+And implementation.
+
+Note there are two internal methods:
+
+1. `_getItemsAsync` Gets the items.  This builds an `IQueryable` object and returns it as an un-materialized IEnumerable.  It will only get executed when enumerated.
+2. `_getCountAsync` Gets the count of all the records based on the filter.
+
+```csharp
+public class ListRequestHandler<TDbContext> : IListRequestHandler
+    where TDbContext : DbContext
+{
+    private readonly IDbContextFactory<TDbContext> _factory;
+
+    public ListRequestHandler(IDbContextFactory<TDbContext> factory)
+        => _factory = factory;
+
+    public async ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest<TRecord> request)
+        where TRecord : class, new()
+    {
+        var list = await _getItemsAsync<TRecord>(request);
+        var totalCount = await _getCountAsync<TRecord>(request);
+
+        return ListQueryResult<TRecord>.Success(list, totalCount);
+    }
+
+    private ValueTask<IEnumerable<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest<TRecord> request)
+        where TRecord : class, new()
+    {
+        if (request == null)
+            throw new DataPipelineException($"No ListQueryRequest defined in {this.GetType().FullName}");
+
+        using var dbContext = _factory.CreateDbContext();
+        dbContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+
+        IQueryable<TRecord> query = dbContext.Set<TRecord>();
+        if (request.FilterExpression is not null)
+            query = query
+                .Where(request.FilterExpression)
+                .AsQueryable();
+
+        if (request.SortExpression is not null)
+
+            query = request.SortDescending
+                ? query.OrderByDescending(request.SortExpression)
+                : query.OrderBy(request.SortExpression);
+
+        if (request.PageSize > 0)
+            query = query
+                .Skip(request.StartIndex)
+                .Take(request.PageSize);
+
+        return ValueTask.FromResult(query.AsEnumerable());
+    }
+
+    private async ValueTask<long> _getCountAsync<TRecord>(ListQueryRequest<TRecord> request)
+        where TRecord : class, new()
+    {
+        using var dbContext = _factory.CreateDbContext();
+        dbContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+
+        IQueryable<TRecord> query = dbContext.Set<TRecord>();
+
+        if (request.FilterExpression is not null)
+            query = query
+                .Where(request.FilterExpression)
+                .AsQueryable();
+
+        return query is IAsyncEnumerable<TRecord>
+            ? await query.CountAsync(request.Cancellation)
+            : query.Count();
+    }
+}
+```
+### The Repository Replacement
+
+First the interface.
+
+The very important bit is the generic `TRecord` definition on each method, not on the interface.  This removes the need for entity specific implementations.
+
+```csharp
+public interface IDataBroker
+{
+    public ValueTask<ListQueryResult<TRecord>> GetItemsAsync<TRecord>(ListQueryRequest<TRecord> request) where TRecord : class, new();
+    public ValueTask<ItemQueryResult<TRecord>> GetItemAsync<TRecord>(ItemQueryRequest request) where TRecord : class, new();
+    public ValueTask<CommandResult> UpdateItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new();
+    public ValueTask<CommandResult> CreateItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new();
+    public ValueTask<CommandResult> DeleteItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new();
+}
+```
+
+And the implementation.  Each handler is registered in DI and injected into the broker.
+
+```csharp
+public class RepositoryDataBroker : IDataBroker
+{
+    private readonly IListRequestHandler _listRequestHandler;
+    private readonly IItemRequestHandler _itemRequestHandler;
+    private readonly IUpdateRequestHandler _updateRequestHandler;
+    private readonly ICreateRequestHandler _createRequestHandler;
+    private readonly IDeleteRequestHandler _deleteRequestHandler;
+
+    public RepositoryDataBroker(
+        IListRequestHandler listRequestHandler,
+        IItemRequestHandler itemRequestHandler,
+        ICreateRequestHandler createRequestHandler,
+        IUpdateRequestHandler updateRequestHandler,
+        IDeleteRequestHandler deleteRequestHandler)
+    {
+        _listRequestHandler = listRequestHandler;
+        _itemRequestHandler = itemRequestHandler;
+        _createRequestHandler = createRequestHandler;
+        _updateRequestHandler = updateRequestHandler;
+        _deleteRequestHandler = deleteRequestHandler;
+    }
+
+    public ValueTask<ItemQueryResult<TRecord>> GetItemAsync<TRecord>(ItemQueryRequest request) where TRecord : class, new()
+        => _itemRequestHandler.ExecuteAsync<TRecord>(request);
+
+    public ValueTask<ListQueryResult<TRecord>> GetItemsAsync<TRecord>(ListQueryRequest<TRecord> request) where TRecord : class, new()
+        => _listRequestHandler.ExecuteAsync<TRecord>(request);
+
+    public ValueTask<CommandResult> CreateItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new()
+        => _createRequestHandler.ExecuteAsync<TRecord>(request);
+
+    public ValueTask<CommandResult> UpdateItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new()
+        => _updateRequestHandler.ExecuteAsync<TRecord>(request);
+
+    public ValueTask<CommandResult> DeleteItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new()
+        => _deleteRequestHandler.ExecuteAsync<TRecord>(request);
+}
+```
+
+## Testing the Data Broker
+
+We can now define a set of tests to test the data broker.  I've included two here.  The rest are in the Repo.
+
+First two methods to create our root DI container and populate the database.
+
+```csharp
+private ServiceProvider BuildRootContainer()
+{
+    var services = new ServiceCollection();
+
+    // Define the DbSet and Server Type for the DbContext Factory
+    services.AddDbContextFactory<InMemoryWeatherDbContext>(options
+        => options.UseInMemoryDatabase($"WeatherDatabase-{Guid.NewGuid().ToString()}"));
+    // Define the Broker and Handlers
+    services.AddScoped<IDataBroker, RepositoryDataBroker>();
+    services.AddScoped<IListRequestHandler, ListRequestHandler<InMemoryWeatherDbContext>>();
+    services.AddScoped<IItemRequestHandler, ItemRequestHandler<InMemoryWeatherDbContext>>();
+    services.AddScoped<IUpdateRequestHandler, UpdateRequestHandler<InMemoryWeatherDbContext>>();
+    services.AddScoped<ICreateRequestHandler, CreateRequestHandler<InMemoryWeatherDbContext>>();
+    services.AddScoped<IDeleteRequestHandler, DeleteRequestHandler<InMemoryWeatherDbContext>>();
+
+    // Create the container
+    return services.BuildServiceProvider();
+}
+
+private IDbContextFactory<InMemoryWeatherDbContext> GetPopulatedFactory(IServiceProvider provider)
+{
+    // get the DbContext factory and add the test data
+    var factory = provider.GetService<IDbContextFactory<InMemoryWeatherDbContext>>();
+    if (factory is not null)
+        WeatherTestDataProvider.Instance().LoadDbContext<InMemoryWeatherDbContext>(factory);
+
+    return factory!;
+}
+```
+
+The GetItems test:
+
+```csharp
+[Fact]
+public async Task GetItemsTest()
+{
+    // Get our test provider to use as our control
+    var testProvider = WeatherTestDataProvider.Instance();
+
+    // Build the root DI Container
+    var rootProvider = this.BuildRootContainer();
+
+    //define a scoped container
+    var providerScope = rootProvider.CreateScope();
+    var provider = providerScope.ServiceProvider;
+
+    // get the DbContext factory and add the test data
+    var factory = this.GetPopulatedFactory(provider);
+
+    // Check we can retrieve thw first 1000 records
+    var dbContext = factory!.CreateDbContext();
+    Assert.NotNull(dbContext);
+
+    var databroker = provider.GetRequiredService<IDataBroker>();
+
+    var request = new ListQueryRequest<WeatherForecast>();
+    var result = await databroker.GetItemsAsync<WeatherForecast>(request);
+
+    Assert.NotNull(result);
+    Assert.Equal(testProvider.WeatherForecasts.Count(), result.TotalCount);
+
+    providerScope.Dispose();
+    rootProvider.Dispose();
+}
+```
+The Add Item test:
+
+```csharp
+[Fact]
+public async Task AddItemTest()
+{
+    // Get our test provider to use as our control
+    var testProvider = WeatherTestDataProvider.Instance();
+
+    // Build the root DI Container
+    var rootProvider = this.BuildRootContainer();
+
+    //define a scoped container
+    var providerScope = rootProvider.CreateScope();
+    var provider = providerScope.ServiceProvider;
+
+    // get the DbContext factory and add the test data
+    var factory = this.GetPopulatedFactory(provider);
+
+    // Check we can retrieve thw first 1000 records
+    var dbContext = factory!.CreateDbContext();
+    Assert.NotNull(dbContext);
+
+    var databroker = provider.GetRequiredService<IDataBroker>();
+
+    // Create a Test record
+    var newRecord = new WeatherForecast { Uid = Guid.NewGuid(), Date = DateOnly.FromDateTime(DateTime.Now), TemperatureC = 50, Summary = "Add Testing" };
+
+    // Add the Record
+    {
+        var request = new CommandRequest<WeatherForecast>() { Item = newRecord };
+        var result = await databroker.CreateItemAsync<WeatherForecast>(request);
+
+        Assert.NotNull(result);
+        Assert.True(result.Successful);
+    }
+
+    // Get the new record
+    {
+        var request = new ItemQueryRequest() { Uid = newRecord.Uid };
+        var result = await databroker.GetItemAsync<WeatherForecast>(request);
+
+        Assert.Equal(newRecord, result.Item);
+    }
+
+    // Check the record count has incremented
+    {
+        var request = new ListQueryRequest<WeatherForecast>();
+        var result = await databroker.GetItemsAsync<WeatherForecast>(request);
+
+        Assert.NotNull(result);
+        Assert.Equal(testProvider.WeatherForecasts.Count() + 1, result.TotalCount);
+    }
+
+    providerScope.Dispose();
+    rootProvider.Dispose();
+}
+```
+
+
+```csharp
+```
+
+
+```csharp
+```
+
+## Appendix
+
+### The Data Store
 
 The solution needs a real data store to test and run the solution properly.  It implements an Entity Framework In-Memory database.
 
@@ -143,181 +749,4 @@ public class InMemoryWeatherDbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
         => modelBuilder.Entity<WeatherForecast>().ToTable("WeatherForecast");
 }
-```
-
-### Testing the Factory and Context
-
-The following test sets up a DI container, loads the data from the Test Provider, and tests that we have the crrect number of records and one arbitary record from the data set.
-```csharp
-[Fact]
-public async Task DBContextTest()
-{
-    var testProvider = WeatherTestDataProvider.Instance();
-
-    // Build our services container
-    var services = new ServiceCollection();
-
-    // Define the DbSet and Server Type for the DbContext Factory
-    services.AddDbContextFactory<InMemoryWeatherDbContext>(options
-        => options.UseInMemoryDatabase($"WeatherDatabase-{Guid.NewGuid().ToString()}"));
-
-    var rootProvider = services.BuildServiceProvider();
-
-    //define a scoped container
-    var providerScope = rootProvider.CreateScope();
-    var provider = providerScope.ServiceProvider;
-
-    // get the DbContext factory and add the test data
-    var factory = provider.GetService<IDbContextFactory<InMemoryWeatherDbContext>>();
-    if (factory is not null)
-        WeatherTestDataProvider.Instance().LoadDbContext<InMemoryWeatherDbContext>(factory);
-
-    // Check the data has been loaded
-    var dbContext = factory!.CreateDbContext();
-    Assert.NotNull(dbContext);
-
-    var count = dbContext.Set<WeatherForecast>().Count();
-    Assert.Equal(testProvider.WeatherForecasts.Count(), count);
-
-    // Test an arbitary record
-    var testRecord = testProvider.GetRandomRecord()!;
-    var record = await dbContext.Set<WeatherForecast>().SingleOrDefaultAsync(item => item.Uid.Equals(testRecord.Uid));
-    Assert.Equal(testRecord, record);
-
-    providerScope.Dispose();
-    rootProvider.Dispose();
-}
-```
-
-## The Classic Class
-
-Here's a nice succinct implementation.  What's wrong:
-
-1. What happens when a `null` is returned, what does it mean?
-2. Did that add/update/delete succeed?
-3. How do you handle cancellation tokens?
-4. What happens when you DBset contains a million records (maybe because the DBA got something wrong last night)?
-
-```csharp
-    public abstract class Repository<T> : IRepository<T> where T : class
-    {
-        protected readonly DbContextClass _dbContext;
-
-        protected GenericRepository(DbContextClass context)
-            => _dbContext = context;
-
-        public async Task<T> GetById(int id)
-            => await _dbContext.Set<T>().FindAsync(id);
-
-        public async Task<IEnumerable<T>> GetAll()
-            => await _dbContext.Set<T>().ToListAsync();
-
-        public async Task Add(T entity)
-             => await _dbContext.Set<T>().AddAsync(entity);
-
-        public void Delete(T entity)
-            => _dbContext.Set<T>().Remove(entity);
-
-        public void Update(T entity)
-           =>  _dbContext.Set<T>().Update(entity);
-    }
-}
-```
-
-Before we re-define the class, we need some request and result objects.
-
-Our base requests looks like this:
-
-```csharp
-public record CommandRequest<TRecord>
-{
-    public required TRecord Item { get; init; }
-    public CancellationToken Cancellation { get; set; } = new ();
-}
-```
-
-```csharp
-public record ItemQueryRequest
-{
-    public required Guid Uid { get; init; }
-    public CancellationToken Cancellation { get; set; } = new();
-}
-```
-
-```csharp
-public record ItemQueryRequest
-{
-    public required Guid Uid { get; init; }
-    public CancellationToken Cancellation { get; set; } = new();
-}
-```
-
-```csharp
-public record ListQueryRequest<TRecord>
-{
-    public int StartIndex { get; init; } = 0;
-    public int PageSize { get; init; } = 1000;
-    public CancellationToken Cancellation { get; set; } = new ();
-    public bool SortDescending { get; } = false;
-    public Expression<Func<TRecord, bool>>? FilterExpression { get; init; }
-    public Expression<Func<TRecord, object>>? SortExpression { get; init; }
-}
-```
-
-And our base Results:
-
-```csharp
-public record CommandResult
-{
-    public bool Successful { get; init; }
-    public string Message { get; init; } = string.Empty;
-
-    private CommandResult() { }
-
-    public static CommandResult Success(string? message = null)
-        => new CommandResult { Successful = true, Message= message ?? string.Empty };
-
-    public static CommandResult Failure(string message)
-        => new CommandResult { Message = message};
-}
-```
-
-```csharp
-public record ItemQueryResult<TRecord>
-{
-    public TRecord? Item { get; init;} 
-    public bool Successful { get; init; }
-    public string Message { get; init; } = string.Empty;
-
-    private ItemQueryResult() { }
-
-    public static ItemQueryResult<TRecord> Success(TRecord Item, string? message = null)
-        => new ItemQueryResult<TRecord> { Successful=true, Item= Item, Message= message ?? string.Empty };
-
-    public static ItemQueryResult<TRecord> Failure(string message)
-        => new ItemQueryResult<TRecord> { Message = message};
-}
-```
-
-
-```csharp
-public record ListQueryResult<TRecord>
-{
-    public IEnumerable<TRecord> Items { get; init;} = Enumerable.Empty<TRecord>();  
-    public bool Successful { get; init; }
-    public string Message { get; init; } = string.Empty;
-    public long TotalCount { get; init; }
-
-    private ListQueryResult() { }
-
-    public static ListQueryResult<TRecord> Success(IEnumerable<TRecord> Items, long totalCount, string? message = null)
-        => new ListQueryResult<TRecord> {Successful=true,  Items= Items, TotalCount = totalCount, Message= message ?? string.Empty };
-
-    public static ListQueryResult<TRecord> Failure(string message)
-        => new ListQueryResult<TRecord> { Message = message};
-}
-```
-
-
-```csharp
 ```

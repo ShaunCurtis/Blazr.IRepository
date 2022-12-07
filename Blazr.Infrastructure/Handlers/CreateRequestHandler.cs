@@ -26,7 +26,7 @@ public class CreateRequestHandler<TDbContext>
         using var dbContext = _factory.CreateDbContext();
 
         dbContext.Add<TRecord>(request.Item);
-        return await dbContext.SaveChangesAsync() == 1
+        return await dbContext.SaveChangesAsync(request.Cancellation) == 1
             ? CommandResult.Success("Record Updated")
             : CommandResult.Failure("Error updating Record");
     }

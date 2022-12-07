@@ -4,7 +4,6 @@
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
 using Blazr.Infrastructure;
-using Microsoft.EntityFrameworkCore;
 
 namespace Blazr.Core;
 
@@ -26,7 +25,7 @@ public class UpdateRequestHandler<TDbContext>
         using var dbContext = _factory.CreateDbContext();
 
         dbContext.Update<TRecord>(request.Item);
-        return await dbContext.SaveChangesAsync() == 1
+        return await dbContext.SaveChangesAsync(request.Cancellation) == 1
             ? CommandResult.Success("Record Saved")
             : CommandResult.Failure("Error saving Record");
     }

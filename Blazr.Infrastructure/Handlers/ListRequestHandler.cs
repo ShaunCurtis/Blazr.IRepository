@@ -71,7 +71,7 @@ public class ListRequestHandler<TDbContext> : IListRequestHandler
                 .AsQueryable();
 
         return query is IAsyncEnumerable<TRecord>
-            ? await query.CountAsync()
+            ? await query.CountAsync(request.Cancellation)
             : query.Count();
     }
 

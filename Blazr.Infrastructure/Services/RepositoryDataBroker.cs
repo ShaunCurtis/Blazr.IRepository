@@ -4,12 +4,9 @@
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
 
-using Microsoft.EntityFrameworkCore;
-
 namespace Blazr.Infrastructure;
 
-public class ServerDataBroker<TDbContext> : IDataBroker
-    where TDbContext : DbContext
+public class RepositoryDataBroker : IDataBroker
 {
     private readonly IListRequestHandler _listRequestHandler;
     private readonly IItemRequestHandler _itemRequestHandler;
@@ -17,7 +14,7 @@ public class ServerDataBroker<TDbContext> : IDataBroker
     private readonly ICreateRequestHandler _createRequestHandler;
     private readonly IDeleteRequestHandler _deleteRequestHandler;
 
-    public ServerDataBroker(
+    public RepositoryDataBroker(
         IListRequestHandler listRequestHandler,
         IItemRequestHandler itemRequestHandler,
         ICreateRequestHandler createRequestHandler,

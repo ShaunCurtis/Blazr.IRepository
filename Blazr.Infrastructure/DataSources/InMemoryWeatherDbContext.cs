@@ -5,7 +5,7 @@
 /// ============================================================
 namespace Blazr.Infrastructure;
 
-public class InMemoryWeatherDbContext
+public sealed class InMemoryWeatherDbContext
     : DbContext
 {
     public DbSet<WeatherForecast> WeatherForecast { get; set; } = default!;

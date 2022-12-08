@@ -5,7 +5,7 @@
 /// ============================================================
 namespace Blazr.Core;
 
-public record ItemQueryRequest
+public sealed record ItemQueryRequest
 {
     public required Guid Uid { get; init; }
     public CancellationToken Cancellation { get; set; } = new();

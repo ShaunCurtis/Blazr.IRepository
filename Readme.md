@@ -42,7 +42,7 @@ As I'm a Blazor developer, my data class is the good old `WeatherForecast`. The 
 Here's the `DbContext` used by the DBContext factory.
 
 ```csharp
-public class InMemoryWeatherDbContext : DbContext
+public sealed class InMemoryWeatherDbContext : DbContext
 {
     public DbSet<WeatherForecast> WeatherForecast { get; set; } = default!;
     public InMemoryWeatherDbContext(DbContextOptions<InMemoryWeatherDbContext> options) : base(options) { }
@@ -184,7 +184,7 @@ public record CommandResult
 *Queries* are requests to get data from the data store: no mutation.  We can define an item query like this:
 
 ```csharp
-public record ItemQueryRequest
+public sealed record ItemQueryRequest
 {
     public required Guid Uid { get; init; }
     public CancellationToken Cancellation { get; set; } = new();
@@ -194,7 +194,7 @@ public record ItemQueryRequest
 And the return by the handler: the requested data and status.
 
 ```csharp
-public record ItemQueryResult<TRecord>
+public sealed record ItemQueryResult<TRecord>
 {
     public TRecord? Item { get; init;} 
     public bool Successful { get; init; }
@@ -218,7 +218,7 @@ List queries present a few extra challenges.
 2. They need to handle sorting and filtering.  The request defines these as Linq Expressions.
 
 ```csharp
-public record ListQueryRequest<TRecord>
+public sealed record ListQueryRequest<TRecord>
 {
     public int StartIndex { get; init; } = 0;
     public int PageSize { get; init; } = 1000;
@@ -232,7 +232,7 @@ public record ListQueryRequest<TRecord>
 The result returns the items, and the count of total items in the table/view.  `Items` are always returned as `IEnumerable`.
 
 ```csharp
-public record ListQueryResult<TRecord>
+public sealed record ListQueryResult<TRecord>
 {
     public IEnumerable<TRecord> Items { get; init;} = Enumerable.Empty<TRecord>();  
     public bool Successful { get; init; }
@@ -274,7 +274,7 @@ And the implementation does the real work.
 5. Provides status information if things go wrong.
 
 ```csharp
-public class CreateRequestHandler<TDbContext>
+public sealed class CreateRequestHandler<TDbContext>
     : ICreateRequestHandler
     where TDbContext : DbContext
 {
@@ -324,7 +324,7 @@ And the server implementation. Note:
 
 
 ```csharp
-public class ItemRequestHandler<TDbContext>
+public sealed class ItemRequestHandler<TDbContext>
     : IItemRequestHandler
     where TDbContext : DbContext
 {
@@ -378,7 +378,7 @@ Note there are two internal methods:
 2. `_getCountAsync` Gets the count of all the records based on the filter.
 
 ```csharp
-public class ListRequestHandler<TDbContext> : IListRequestHandler
+public sealed class ListRequestHandler<TDbContext> : IListRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
@@ -463,7 +463,7 @@ public interface IDataBroker
 And the implementation.  Each handler is registered in DI and injected into the broker.
 
 ```csharp
-public class RepositoryDataBroker : IDataBroker
+public sealed class RepositoryDataBroker : IDataBroker
 {
     private readonly IListRequestHandler _listRequestHandler;
     private readonly IItemRequestHandler _itemRequestHandler;
@@ -648,7 +648,7 @@ The solution needs a real data store to test and run the solution properly.  It 
 As I'm a Blazor developer my data class is the good old `WeatherForecast`.  Here's my data class.  Note it is a record for immutability and I've set some arbitary default values for testing purposes.
 
 ```csharp
-public record WeatherForecast : IGuidIdentity
+public sealed record WeatherForecast : IGuidIdentity
 {
     [Key] public Guid Uid { get; init; } = Guid.Empty;
     public DateOnly Date { get; init; } = DateOnly.FromDateTime(DateTime.Now);
@@ -660,7 +660,7 @@ public record WeatherForecast : IGuidIdentity
 First a class to generate a data set is both loaded into the database and available directly for running unit tests.  This is a *Singleton* pattern class, not a DI singleton.  There are methods such as `GetRandomRecord` for testing.
 
 ```csharp
-public class WeatherTestDataProvider
+public sealed class WeatherTestDataProvider
 {
     private int RecordsToGenerate;
 
@@ -754,7 +754,7 @@ public class WeatherTestDataProvider
 The `DbContext`.
 
 ```csharp
-public class InMemoryWeatherDbContext
+public sealed class InMemoryWeatherDbContext
     : DbContext
 {
     public DbSet<WeatherForecast> WeatherForecast { get; set; } = default!;

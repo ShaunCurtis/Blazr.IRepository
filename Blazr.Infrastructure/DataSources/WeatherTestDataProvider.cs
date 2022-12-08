@@ -9,7 +9,7 @@ namespace Blazr.Infrastructure;
 /// <summary>
 /// A class to build a fixed data set for testing
 /// </summary>
-public class WeatherTestDataProvider
+public sealed class WeatherTestDataProvider
 {
     private int RecordsToGenerate;
 

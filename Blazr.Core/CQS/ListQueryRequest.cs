@@ -6,7 +6,7 @@
 /// ============================================================
 namespace Blazr.Core;
 
-public record ListQueryRequest<TRecord>
+public sealed record ListQueryRequest<TRecord>
 {
     public int StartIndex { get; init; } = 0;
     public int PageSize { get; init; } = 1000;

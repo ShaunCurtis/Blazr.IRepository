@@ -5,7 +5,7 @@
 /// ============================================================
 namespace Blazr.Core;
 
-public record ItemQueryResult<TRecord>
+public sealed record ItemQueryResult<TRecord>
 {
     public TRecord? Item { get; init;} 
     public bool Successful { get; init; }

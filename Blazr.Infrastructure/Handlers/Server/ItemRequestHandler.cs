@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Blazr.Core;
 
-public class ItemRequestHandler<TDbContext>
+public sealed class ItemRequestHandler<TDbContext>
     : IItemRequestHandler
     where TDbContext : DbContext
 {

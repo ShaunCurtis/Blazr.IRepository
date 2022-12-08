@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Blazr.Core;
 
-public class DeleteRequestHandler<TDbContext>
+public sealed class DeleteRequestHandler<TDbContext>
     : IDeleteRequestHandler
     where TDbContext : DbContext
 {

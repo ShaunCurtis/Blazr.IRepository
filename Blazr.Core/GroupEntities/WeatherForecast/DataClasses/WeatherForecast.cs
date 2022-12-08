@@ -8,7 +8,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Blazr.Core;
 
-public record WeatherForecast : IGuidIdentity
+public sealed record WeatherForecast : IGuidIdentity
 {
     [Key] public Guid Uid { get; init; } = Guid.Empty;
 

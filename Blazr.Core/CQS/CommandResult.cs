@@ -5,7 +5,7 @@
 /// ============================================================
 namespace Blazr.Core;
 
-public record CommandResult
+public sealed record CommandResult
 {
     public bool Successful { get; init; }
     public string Message { get; init; } = string.Empty;

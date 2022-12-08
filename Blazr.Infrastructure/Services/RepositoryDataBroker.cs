@@ -6,7 +6,7 @@
 
 namespace Blazr.Infrastructure;
 
-public class RepositoryDataBroker : IDataBroker
+public sealed class RepositoryDataBroker : IDataBroker
 {
     private readonly IListRequestHandler _listRequestHandler;
     private readonly IItemRequestHandler _itemRequestHandler;

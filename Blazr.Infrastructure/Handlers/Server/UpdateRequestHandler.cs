@@ -7,7 +7,7 @@ using Blazr.Infrastructure;
 
 namespace Blazr.Core;
 
-public class UpdateRequestHandler<TDbContext>
+public sealed class UpdateRequestHandler<TDbContext>
     : IUpdateRequestHandler
     where TDbContext : DbContext
 {

@@ -8,7 +8,7 @@ using Blazr.Infrastructure;
 
 namespace Blazr.Core;
 
-public class ListRequestHandler<TDbContext> : IListRequestHandler
+public sealed class ListRequestHandler<TDbContext> : IListRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;

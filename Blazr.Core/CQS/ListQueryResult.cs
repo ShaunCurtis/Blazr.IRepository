@@ -5,7 +5,7 @@
 /// ============================================================
 namespace Blazr.Core;
 
-public record ListQueryResult<TRecord>
+public sealed record ListQueryResult<TRecord>
 {
     public IEnumerable<TRecord> Items { get; init;} = Enumerable.Empty<TRecord>();  
     public bool Successful { get; init; }

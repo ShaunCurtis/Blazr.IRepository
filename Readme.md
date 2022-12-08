@@ -1,9 +1,8 @@
 # Rethinking the Repository Pattern
 
-
 ## Introduction
 
-This is not an regurgitation of how to build the classic `IRepository` in DotNetCore.  The version presented here is a very different animal.
+This is no regurgitated how to build the classic `IRepository` in DotNetCore.  The implementation presented here is a very different animal.
 
 How so:
 
@@ -22,24 +21,29 @@ How so:
 
 3. All standard Data I/O uses a single Data Broker.
 
-4. It implements some good CQS practices and patterns.
+4. CQS practices and patterns creep into the design.
 
-## Nomenclature and Terminology
+## Nomenclature, Terminology and Practices
 
  - **DI**: Dependancy Injection 
- - **CQS**: Command/Query Separation 
+ - **CQS**: Command/Query Separation
+
+The code is:
+ - *Net7.0*
+ - C# 10
+ - Nullable enabled 
 
 ## Repo
 
-The Repo and latest version of this article is here: [Blazr.IREpository](https://github.com/ShaunCurtis/Blazr.IRepository).
+The Repo and latest version of this article are here: [Blazr.IRepository](https://github.com/ShaunCurtis/Blazr.IRepository).
 
 ## The Data Store
 
 The solution needs a real data store for testing: it implements an Entity Framework In-Memory database.
 
-As I'm a Blazor developer, my data class is the good old `WeatherForecast`. The code for and details of the data store are in the Appendix.
+I'm a Blazor developer so my data class is the good old `WeatherForecast`. The code is in the Appendix.
 
-Here's the `DbContext` used by the DBContext factory.
+This is the `DbContext` used by the DBContext factory.
 
 ```csharp
 public sealed class InMemoryWeatherDbContext : DbContext
@@ -54,7 +58,7 @@ public sealed class InMemoryWeatherDbContext : DbContext
 
 ### Testing the Factory and Context
 
-The following test demonstrates the basic datastore setup in DI. It:
+The following XUnit test demonstrates the basic datastore setup in DI. It:
 1. Sets up a DI container
 2. Loads the data from the Test Provider
 3. Tests the record count is correct
@@ -103,7 +107,7 @@ public async Task DBContextTest()
 }
 ```
 
-## The Classic Implementation
+## The Classic Repository Pattern Implementation
 
 Here's a nice succinct implementation that I found on the Internet.
 
@@ -132,27 +136,25 @@ Here's a nice succinct implementation that I found on the Internet.
     }
 }
 ```
-Let's take a look at it:
+Picking it apart:
 
 1. What happens when a `null` is returned, what does it mean?
 2. Did that add/update/delete really succeed?  How do I know?
 3. How do you handle cancellation tokens?  Most of the async methods now accept a cancellation token.
-4. What happens when your DBset contains a million records (maybe because the DBA got something wrong last night)?
+4. What happens when your `DBSet` contains a million records (maybe the DBA got something wrong last night)?
 5. .....
 
-## The new Implementation
+## This Implementation
 
-Another data pipeline implementation is CQS.  It's more verbose than the Repository pattern, but it implements some key good practices that we should use.
+An alternative to the Repository patttern is CQS.  It's more verbose, but it implements some good practices that we could build into our implementation.
 
 ### Requests and Results
 
-We need some request and result objects to encapulate what we are requesting and the results ans status information we expect back.  Everything is a record: defined once and then consumed.
-
-We can define a command like this:
+Request objects encapulate what we request and the result objects the data and status information we expect back.  Thet are defined as records: defined once and then consumed.
 
 #### Commands
 
-*Commands* are requests to make a change to data store: the standard Create/Update/Delete operations.
+A *Command* is a request to make a change to the data store: Create/Update/Delete operations.
 
 ```csharp
 public record CommandRequest<TRecord>
@@ -161,7 +163,7 @@ public record CommandRequest<TRecord>
     public CancellationToken Cancellation { get; set; } = new ();
 }
 ```
-Handlers for commands only return status information: no data.  We can define the result like this:
+The result only returns status information: no data.  We can define a result like this:
 
 ```csharp
 public record CommandResult
@@ -179,9 +181,11 @@ public record CommandResult
 }
 ```
 
+There's one exception to the return rule: the Id for an inserted record.  If you aren't using Guids to give your records unique identifiers, then the database generated Id should be considered a piece of status information!
+
 #### Item Requests
 
-*Queries* are requests to get data from the data store: no mutation.  We can define an item query like this:
+A *Query* is a request to get data from the data store: no mutation.  We can define an item query like this:
 
 ```csharp
 public sealed record ItemQueryRequest
@@ -191,7 +195,7 @@ public sealed record ItemQueryRequest
 }
 ```
 
-And the return by the handler: the requested data and status.
+And the return result: the requested data and status.
 
 ```csharp
 public sealed record ItemQueryResult<TRecord>
@@ -214,7 +218,7 @@ public sealed record ItemQueryResult<TRecord>
 
 List queries present a few extra challenges.
 
-1. They should never request everything.  In edge conditions there may be 1,000,000+ rows in a table.  Every request should be constrained.  The request defines `StartIndex` and `PageSize` to both constrain the data and provide functionality for paging operations.  If you set the page size to 1,000,000 will your data pipeline and front end handle it gracefully?
+1. They should never request everything.  In edge conditions there may be 1,000,000+ rows in a table.  Every request should be constrained.  The request defines `StartIndex` and `PageSize` to both constrain the data and provide paging.  If you set the page size to 1,000,000, will your data pipeline and front end handle it gracefully?
 2. They need to handle sorting and filtering.  The request defines these as Linq Expressions.
 
 ```csharp
@@ -229,7 +233,7 @@ public sealed record ListQueryRequest<TRecord>
 }
 ```
 
-The result returns the items, and the count of total items in the table/view.  `Items` are always returned as `IEnumerable`.
+The result returns the items, the total item count (for paging) and status information.  `Items` are always returned as `IEnumerable`.
 
 ```csharp
 public sealed record ListQueryResult<TRecord>
@@ -251,7 +255,7 @@ public sealed record ListQueryResult<TRecord>
 
 ### Handlers
 
-Handlers are small single purpose classes that handle requests.  They abstract the nitty-gritty execution from the higher level Data Broker.
+Handlers are small single purpose classes that handle requests and return results.  They abstract the nitty-gritty execution from the higher level Data Broker.
 
 #### Command Handlers
 
@@ -633,19 +637,25 @@ public async Task AddItemTest()
 }
 ```
 
-Wrapping Up
+## Wrapping Up
 
-What I've presented here is a Repository Pattern hybrid.  It maintains the simplicity of the Repository Pattern, but applies some of the best bits of the CQS Pattern.  Abstracting the actual nitty-gritty EF and Linq code to individual handlers keeps the classes small, succinct and single purpose.
+What I've presented here is a hybrid Repository Pattern.  It maintains the Repository Pattern's simplicity, and adds some of the best CQS Pattern features.  
 
-The single Data Broker simplifies data access for the Core and Presentation domain code.
+Abstracting the nitty-gritty EF and Linq code to individual handlers keeps the classes small, succinct and single purpose.
+
+The single Data Broker simplifies data pipeline configuration for the Core and Presentation domains.
+
+To those who believe that implementing any database pipeline over EF is an anti-pattern, my answer is simple.  
+
+I use EF as just another Object Request Broker [ORB].  You can plug this pipeline into Dapper, LinqToDb, ... .  I never build core business logic code (data relationships) into my Data/Infrastructure Domain: [personal view] crazy idea.
 
 ## Appendix
 
 ### The Data Store
 
-The solution needs a real data store to test and run the solution properly.  It implements an Entity Framework In-Memory database.
+The test system implements an Entity Framework In-Memory database.
 
-As I'm a Blazor developer my data class is the good old `WeatherForecast`.  Here's my data class.  Note it is a record for immutability and I've set some arbitary default values for testing purposes.
+I'm a Blazor developer so naturally my demo data class is `WeatherForecast`.  Here's my data class.  Note it is a record for immutability and I've set some arbitary default values for testing purposes.
 
 ```csharp
 public sealed record WeatherForecast : IGuidIdentity
@@ -657,7 +667,7 @@ public sealed record WeatherForecast : IGuidIdentity
 }
 ```
 
-First a class to generate a data set is both loaded into the database and available directly for running unit tests.  This is a *Singleton* pattern class, not a DI singleton.  There are methods such as `GetRandomRecord` for testing.
+First a class to generate a data set.  This is a *Singleton* pattern class (not a DI singleton).  Methods such as `GetRandomRecord` are for testing.
 
 ```csharp
 public sealed class WeatherTestDataProvider

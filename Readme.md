@@ -378,28 +378,11 @@ And implementation.
 
 Note there are two internal methods:
 
-1. `_getItemsAsync` Gets the items.  This builds an `IQueryable` object and returns it as an un-materialized `IEnumerable`.  It only gets executed when enumerated.
+1. `_getItemsAsync` Gets the items.  This builds an `IQueryable` object and returns a materialized `IEnumerable`.  You must execute the query before the factory disposes the DbContext.
 2. `_getCountAsync` Gets the count of all the records based on the filter.
 
 ```csharp
-public sealed class ListRequestHandler<TDbContext> : IListRequestHandler
-    where TDbContext : DbContext
-{
-    private readonly IDbContextFactory<TDbContext> _factory;
-
-    public ListRequestHandler(IDbContextFactory<TDbContext> factory)
-        => _factory = factory;
-
-    public async ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest<TRecord> request)
-        where TRecord : class, new()
-    {
-        var list = await _getItemsAsync<TRecord>(request);
-        var totalCount = await _getCountAsync<TRecord>(request);
-
-        return ListQueryResult<TRecord>.Success(list, totalCount);
-    }
-
-    private ValueTask<IEnumerable<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest<TRecord> request)
+    private async ValueTask<IEnumerable<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest<TRecord> request)
         where TRecord : class, new()
     {
         if (request == null)
@@ -425,28 +408,12 @@ public sealed class ListRequestHandler<TDbContext> : IListRequestHandler
                 .Skip(request.StartIndex)
                 .Take(request.PageSize);
 
-        return ValueTask.FromResult(query.AsEnumerable());
-    }
-
-    private async ValueTask<long> _getCountAsync<TRecord>(ListQueryRequest<TRecord> request)
-        where TRecord : class, new()
-    {
-        using var dbContext = _factory.CreateDbContext();
-        dbContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
-
-        IQueryable<TRecord> query = dbContext.Set<TRecord>();
-
-        if (request.FilterExpression is not null)
-            query = query
-                .Where(request.FilterExpression)
-                .AsQueryable();
-
         return query is IAsyncEnumerable<TRecord>
-            ? await query.CountAsync(request.Cancellation)
-            : query.Count();
+            ? await query.ToListAsync()
+            : query.ToList();
     }
-}
 ```
+
 ### The Repository Class Replacement
 
 First the interface.

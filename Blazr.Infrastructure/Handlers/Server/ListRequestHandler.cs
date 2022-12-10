@@ -25,7 +25,7 @@ public sealed class ListRequestHandler<TDbContext> : IListRequestHandler
         return ListQueryResult<TRecord>.Success(list, totalCount);
     }
 
-    private ValueTask<IEnumerable<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest<TRecord> request)
+    private async ValueTask<IEnumerable<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest<TRecord> request)
         where TRecord : class, new()
     {
         if (request == null)
@@ -51,10 +51,9 @@ public sealed class ListRequestHandler<TDbContext> : IListRequestHandler
                 .Skip(request.StartIndex)
                 .Take(request.PageSize);
 
-        return ValueTask.FromResult(query.AsEnumerable());
-        //return query is IAsyncEnumerable<TRecord>
-        //    ? await query.ToListAsync()
-        //    : query.ToList();
+        return query is IAsyncEnumerable<TRecord>
+            ? await query.ToListAsync()
+            : query.ToList();
     }
 
     private async ValueTask<long> _getCountAsync<TRecord>(ListQueryRequest<TRecord> request)

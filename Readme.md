@@ -2,9 +2,11 @@
 
 ## Introduction
 
-This is no regurgitated how to build the classic `IRepository` in DotNetCore.  The implementation presented here is a very different animal.
+The classic repository pattern is a fairly simple way to implement database access in any application.  It meets many of the normal design goals for a small application.  On the other side, CQS and CQRS provide a more complex but well structured design pattern for larger more complex applications.
 
-How so:
+In this article I'll develop the basic repository pattern applying some of the fundimentally good practices used in CQS and implement a fully generic provider.
+
+This is not a regurgitated `IRepository` implementation in DotNetCore with a few frills.
 
 1. There's no implementation per entity class.  You won't see this:
 
@@ -21,7 +23,7 @@ How so:
 
 3. All standard Data I/O uses a single Data Broker.
 
-4. CQS practices and patterns creep into the design.
+4. CQS Requests, Results and Handler patterns are used in the design.
 
 ## Nomenclature, Terminology and Practices
 
@@ -31,7 +33,7 @@ How so:
 The code is:
  - *Net7.0*
  - C# 10
- - Nullable enabled 
+ - *Nullable* enabled 
 
 ## Repo
 
@@ -41,7 +43,7 @@ The Repo and latest version of this article are here: [Blazr.IRepository](https:
 
 The solution needs a real data store for testing: it implements an Entity Framework In-Memory database.
 
-I'm a Blazor developer so my data class is the good old `WeatherForecast`. The code is in the Appendix.
+I'm a Blazor developer so my test data class is `WeatherForecast`. The code for the data provider is in the Appendix.
 
 This is the `DbContext` used by the DBContext factory.
 
@@ -140,21 +142,19 @@ Picking it apart:
 
 1. What happens when a `null` is returned, what does it mean?
 2. Did that add/update/delete really succeed?  How do I know?
-3. How do you handle cancellation tokens?  Most of the async methods now accept a cancellation token.
+3. How do you handle cancellation tokens?  Most async methods now accept a cancellation token.
 4. What happens when your `DBSet` contains a million records (maybe the DBA got something wrong last night)?
-5. .....
+5. There's one of me for every data store entity in the application.
 
-## This Implementation
-
-An alternative to the Repository patttern is CQS.  It's more verbose, but it implements some good practices that we could build into our implementation.
+## The Implementation
 
 ### Requests and Results
 
-Request objects encapulate what we request and the result objects the data and status information we expect back.  Thet are defined as records: defined once and then consumed.
+Request objects encapulate what we request and result objects the data and status information we expect back.  They are `records`: defined once and then consumed.
 
 #### Commands
 
-A *Command* is a request to make a change to the data store: Create/Update/Delete operations.
+A *Command* is a request to make a change to the data store: Create/Update/Delete operations.  We can define one like this:
 
 ```csharp
 public record CommandRequest<TRecord>
@@ -163,7 +163,7 @@ public record CommandRequest<TRecord>
     public CancellationToken Cancellation { get; set; } = new ();
 }
 ```
-The result only returns status information: no data.  We can define a result like this:
+Commands only return status information: no data.  We can define a result like this:
 
 ```csharp
 public record CommandResult
@@ -181,7 +181,7 @@ public record CommandResult
 }
 ```
 
-There's one exception to the return rule: the Id for an inserted record.  If you aren't using Guids to give your records unique identifiers, then the database generated Id should be considered a piece of status information!
+At this point it's worth noting one small exception to the return rule: the Id for an inserted record.  If you aren't using Guids to give your records unique identifiers, then the database generated Id is status information.
 
 #### Item Requests
 
@@ -612,9 +612,7 @@ Abstracting the nitty-gritty EF and Linq code to individual handlers keeps the c
 
 The single Data Broker simplifies data pipeline configuration for the Core and Presentation domains.
 
-To those who believe that implementing any database pipeline over EF is an anti-pattern, my answer is simple.  
-
-I use EF as just another Object Request Broker [ORB].  You can plug this pipeline into Dapper, LinqToDb, ... .  I never build core business logic code (data relationships) into my Data/Infrastructure Domain: [personal view] crazy idea.
+To those who believe that implementing any database pipeline over EF is an anti-pattern, my answer is: I use EF as just another Object Request Broker [ORB].  You can plug this pipeline into Dapper, LinqToDb, ... .  I never build core business logic code (data relationships) into my Data/Infrastructure Domain: [personal view] crazy idea.
 
 ## Appendix
 

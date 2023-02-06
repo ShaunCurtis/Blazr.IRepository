@@ -3,19 +3,19 @@
 /// License: Use And Donate
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
-namespace Blazr.App.Core;
+namespace Blazr.Core;
 
-public sealed class WeatherForecastEditContext : RecordEditContextBase<WeatherForecast>
+public sealed class WeatherForecastEditContext1 : RecordEditContextBase<WeatherForecast>
 {
-    private DateOnly? _date;
-    public DateOnly? Date
+    private DateOnly _date;
+    public DateOnly Date
     {
         get => _date;
         set => UpdateifChangedAndNotify(ref _date, value, this.BaseRecord.Date, WeatherForecastConstants.Date);
     }
 
-    private int? _temperatureC;
-    public int? TemperatureC
+    private int _temperatureC;
+    public int TemperatureC
     {
         get => _temperatureC;
         set => UpdateifChangedAndNotify(ref _temperatureC, value, this.BaseRecord.TemperatureC, WeatherForecastConstants.TemperatureC);
@@ -28,7 +28,9 @@ public sealed class WeatherForecastEditContext : RecordEditContextBase<WeatherFo
         set => UpdateifChangedAndNotify(ref _summary!, value, this.BaseRecord.Summary, WeatherForecastConstants.Summary);
     }
 
-    public override void LoadRecord(WeatherForecast record)
+    public WeatherForecastEditContext1(WeatherForecast record) : base(record) { }
+
+    public override void Load(WeatherForecast record, bool notify = true)
     {
         this.BaseRecord = record ??= this.Record with { };
         this.Uid = record.Uid;
@@ -44,8 +46,8 @@ public sealed class WeatherForecastEditContext : RecordEditContextBase<WeatherFo
         new WeatherForecast
         {
             Uid = this.Uid,
-            Date = _date ?? DateOnly.MinValue,
-            TemperatureC = _temperatureC ?? int.MinValue,
+            Date = _date,
+            TemperatureC = _temperatureC,
             Summary = _summary,
         };
 }

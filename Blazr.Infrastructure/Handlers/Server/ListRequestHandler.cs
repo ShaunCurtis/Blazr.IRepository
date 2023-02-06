@@ -3,75 +3,63 @@
 /// License: Use And Donate
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
+using Microsoft.Extensions.DependencyInjection;
+using System.Linq.Expressions;
 
-using Blazr.Infrastructure;
-
-namespace Blazr.Core;
+namespace Blazr.Infrastructure;
 
 public sealed class ListRequestHandler<TDbContext> : IListRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
+    private readonly IServiceProvider _serviceProvider;
 
-    public ListRequestHandler(IDbContextFactory<TDbContext> factory)
-        => _factory = factory;
-
-    public async ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest<TRecord> request)
-        where TRecord : class, new()
+    public ListRequestHandler(IDbContextFactory<TDbContext> factory, IServiceProvider serviceProvider)
     {
-        var list = await _getItemsAsync<TRecord>(request);
-        var totalCount = await _getCountAsync<TRecord>(request);
-
-        return ListQueryResult<TRecord>.Success(list, totalCount);
+        _factory = factory;
+        _serviceProvider = serviceProvider;
     }
 
-    private async ValueTask<IEnumerable<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest<TRecord> request)
+    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest request)
+        where TRecord : class, new()
+            => _getItemsAsync<TRecord>(request);
+
+    private async ValueTask<ListQueryResult<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest request)
         where TRecord : class, new()
     {
+        int count = 0;
         if (request == null)
             throw new DataPipelineException($"No ListQueryRequest defined in {this.GetType().FullName}");
+
+        var sorterProvider = _serviceProvider.GetService<IRecordSorter<TRecord>>();
+        var filterProvider = _serviceProvider.GetService<IRecordFilter<TRecord>>();
 
         using var dbContext = _factory.CreateDbContext();
         dbContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
 
         IQueryable<TRecord> query = dbContext.Set<TRecord>();
-        if (request.FilterExpression is not null)
-            query = query
-                .Where(request.FilterExpression)
-                .AsQueryable();
+        if (filterProvider is not null)
+            query = filterProvider.AddFilterToQuery(request.Filters, query);
 
-        if (request.SortExpression is not null)
+        var countquery = query;
+        count = query is IAsyncEnumerable<TRecord>
+            ? await query.CountAsync(request.Cancellation)
+            : query.Count();
 
-            query = request.SortDescending
-                ? query.OrderByDescending(request.SortExpression)
-                : query.OrderBy(request.SortExpression);
+        count = await query.CountAsync();
+
+        if (sorterProvider is not null)
+            query = sorterProvider.AddSortToQuery(request.SortField, query, request.SortDescending);
 
         if (request.PageSize > 0)
             query = query
                 .Skip(request.StartIndex)
                 .Take(request.PageSize);
 
-        return query is IAsyncEnumerable<TRecord>
+        var list = query is IAsyncEnumerable<TRecord>
             ? await query.ToListAsync()
             : query.ToList();
+
+        return ListQueryResult<TRecord>.Success(list, count);
     }
-
-    private async ValueTask<long> _getCountAsync<TRecord>(ListQueryRequest<TRecord> request)
-        where TRecord : class, new()
-    {
-        using var dbContext = _factory.CreateDbContext();
-        dbContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
-
-        IQueryable<TRecord> query = dbContext.Set<TRecord>();
-
-        if (request.FilterExpression is not null)
-            query = query
-                .Where(request.FilterExpression)
-                .AsQueryable();
-
-        return query is IAsyncEnumerable<TRecord>
-            ? await query.CountAsync(request.Cancellation)
-            : query.Count();
-    }
-
 }

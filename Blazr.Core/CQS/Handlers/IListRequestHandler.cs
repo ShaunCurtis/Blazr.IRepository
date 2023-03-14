@@ -4,10 +4,16 @@
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
 
-namespace Blazr.Infrastructure;
+namespace Blazr.Core;
 
 public interface IListRequestHandler
 {
-    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest<TRecord> request)
+    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest request)
         where TRecord : class, new();
+}
+
+public interface IListRequestHandler<TRecord>
+    where TRecord : class, new()
+{
+    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync(ListQueryRequest request);
 }

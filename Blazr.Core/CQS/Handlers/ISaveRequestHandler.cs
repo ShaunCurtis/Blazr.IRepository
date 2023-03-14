@@ -5,9 +5,14 @@
 /// ============================================================
 
 namespace Blazr.Core;
-
-public interface ICreateRequestHandler
+public interface ISaveRequestHandler
 {
     public ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
         where TRecord : class, new();
+}
+
+public interface ISaveRequestHandler<TRecord>
+        where TRecord : class, new()
+{
+    public ValueTask<CommandResult> ExecuteAsync(CommandRequest<TRecord> request);
 }

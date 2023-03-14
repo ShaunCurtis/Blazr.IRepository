@@ -8,16 +8,18 @@ using System.Linq.Expressions;
 
 namespace Blazr.Infrastructure;
 
-public sealed class ListRequestHandler<TDbContext> : IListRequestHandler
+public sealed class ListRequestBaseServerHandler<TDbContext> : IListRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
     private readonly IServiceProvider _serviceProvider;
+    private ILogger<ListRequestBaseServerHandler<TDbContext>> _logger;
 
-    public ListRequestHandler(IDbContextFactory<TDbContext> factory, IServiceProvider serviceProvider)
+    public ListRequestBaseServerHandler(IDbContextFactory<TDbContext> factory, IServiceProvider serviceProvider, ILogger<ListRequestBaseServerHandler<TDbContext>> logger)
     {
         _factory = factory;
         _serviceProvider = serviceProvider;
+        _logger = logger;
     }
 
     public ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest request)

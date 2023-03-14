@@ -11,3 +11,9 @@ public interface IItemRequestHandler
     public ValueTask<ItemQueryResult<TRecord>> ExecuteAsync<TRecord>(ItemQueryRequest request)
         where TRecord : class, new();
 }
+
+public interface IItemRequestHandler<TRecord>
+        where TRecord : class, new()
+{
+    public ValueTask<ItemQueryResult<TRecord>> ExecuteAsync(ItemQueryRequest request);
+}

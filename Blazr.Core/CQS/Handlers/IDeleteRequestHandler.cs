@@ -6,8 +6,14 @@
 
 namespace Blazr.Core;
 
-public interface IUpdateRequestHandler
+public interface IDeleteRequestHandler
 {
     public ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
         where TRecord : class, new();
+}
+
+public interface IDeleteRequestHandler<TRecord>
+        where TRecord : class, new()
+{
+    public ValueTask<CommandResult> ExecuteAsync(CommandRequest<TRecord> request);
 }

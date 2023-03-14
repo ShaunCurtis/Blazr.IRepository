@@ -3,18 +3,21 @@
 /// License: Use And Donate
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
-using Microsoft.EntityFrameworkCore;
 
-namespace Blazr.Core;
+namespace Blazr.Infrastructure;
 
-public sealed class DeleteRequestHandler<TDbContext>
+public sealed class DeleteRequestBaseServerHandler<TDbContext>
     : IDeleteRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
+    private ILogger<DeleteRequestBaseServerHandler<TDbContext>> _logger;
 
-    public DeleteRequestHandler(IDbContextFactory<TDbContext> factory)
-        => _factory = factory;
+    public DeleteRequestBaseServerHandler(IDbContextFactory<TDbContext> factory, ILogger<DeleteRequestBaseServerHandler<TDbContext>> logger)
+    {
+        _logger = logger;
+        _factory = factory;
+    }
 
     public async ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
         where TRecord : class, new()
@@ -22,7 +25,13 @@ public sealed class DeleteRequestHandler<TDbContext>
         using var dbContext = _factory.CreateDbContext();
 
         dbContext.Remove<TRecord>(request.Item);
-        return await dbContext.SaveChangesAsync(request.Cancellation) == 1
+
+        var recordsChanged = await dbContext.SaveChangesAsync(request.Cancellation);
+
+        if (recordsChanged != 1)
+            _logger.LogCritical($"{this.GetType().Name} failed to delete the Record.  The returned update count was {recordsChanged}");
+
+        return recordsChanged == 1
             ? CommandResult.Success("Record Deleted")
             : CommandResult.Failure("Error deleting Record");
     }

@@ -8,14 +8,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Blazr.Core;
 
-public sealed class ItemRequestHandler<TDbContext>
+public sealed class ItemRequestBaseServerHandler<TDbContext>
     : IItemRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
+    private ILogger<ItemRequestBaseServerHandler<TDbContext>> _logger;
 
-    public ItemRequestHandler(IDbContextFactory<TDbContext> factory)
-        => _factory = factory;
+    public ItemRequestBaseServerHandler(IDbContextFactory<TDbContext> factory, ILogger<ItemRequestBaseServerHandler<TDbContext>> logger)
+    {
+        _logger = logger;
+        _factory = factory;
+    }
 
     public async ValueTask<ItemQueryResult<TRecord>> ExecuteAsync<TRecord>(ItemQueryRequest request)
         where TRecord : class, new()
@@ -36,9 +40,10 @@ public sealed class ItemRequestHandler<TDbContext>
         if (record is null)
             record = await dbContext.FindAsync<TRecord>(request.Uid);
 
-        if (record is null)
+        if (record is null) {
+            _logger.LogCritical($"{this.GetType().Name} failed to find the Record with Uid: {request.Uid}");
             return ItemQueryResult<TRecord>.Failure("No record retrieved");
-
+    }
         return ItemQueryResult<TRecord>.Success(record);
     }
 }

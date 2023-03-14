@@ -3,19 +3,21 @@
 /// License: Use And Donate
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
-using Blazr.Infrastructure;
 
-namespace Blazr.Core;
+namespace Blazr.Infrastructure;
 
-public sealed class UpdateRequestHandler<TDbContext>
+public sealed class UpdateRequestBaseServerHandler<TDbContext>
     : IUpdateRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
+    private ILogger<SaveRequestBaseServerHandler<TDbContext>> _logger;
 
-    public UpdateRequestHandler(IDbContextFactory<TDbContext> factory)
-        => _factory = factory;
-
+    public UpdateRequestBaseServerHandler(IDbContextFactory<TDbContext> factory, ILogger<SaveRequestBaseServerHandler<TDbContext>> logger)
+    {
+        _logger = logger;
+        _factory = factory;
+    }
     public async ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
         where TRecord : class, new()
     {
@@ -25,7 +27,13 @@ public sealed class UpdateRequestHandler<TDbContext>
         using var dbContext = _factory.CreateDbContext();
 
         dbContext.Update<TRecord>(request.Item);
-        return await dbContext.SaveChangesAsync(request.Cancellation) == 1
+
+        var recordsUpdated = await dbContext.SaveChangesAsync(request.Cancellation);
+
+        if (recordsUpdated != 1)
+            _logger.LogCritical($"{this.GetType().Name} failed to Update the Record.  The returned update count was {recordsUpdated}");
+
+        return recordsUpdated == 1
             ? CommandResult.Success("Record Saved")
             : CommandResult.Failure("Error saving Record");
     }

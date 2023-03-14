@@ -4,18 +4,21 @@
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
 using Blazr.Infrastructure;
-using Microsoft.EntityFrameworkCore;
 
 namespace Blazr.Core;
 
-public sealed class CreateRequestHandler<TDbContext>
+public sealed class CreateRequestBaseServerHandler<TDbContext>
     : ICreateRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
+    private ILogger<CreateRequestBaseServerHandler<TDbContext>> _logger;
 
-    public CreateRequestHandler(IDbContextFactory<TDbContext> factory)
-        => _factory = factory;
+    public CreateRequestBaseServerHandler(IDbContextFactory<TDbContext> factory, ILogger<CreateRequestBaseServerHandler<TDbContext>> logger)
+    {
+        _factory = factory;
+        _logger = logger;
+    }
 
     public async ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
         where TRecord : class, new()
@@ -26,7 +29,13 @@ public sealed class CreateRequestHandler<TDbContext>
         using var dbContext = _factory.CreateDbContext();
 
         dbContext.Add<TRecord>(request.Item);
-        return await dbContext.SaveChangesAsync(request.Cancellation) == 1
+
+        var recordsChanged = await dbContext.SaveChangesAsync(request.Cancellation);
+
+        if (recordsChanged != 1)
+            _logger.LogCritical($"{this.GetType().Name} failed to create the Record.  The returned update count was {recordsChanged}");
+
+        return recordsChanged == 1
             ? CommandResult.Success("Record Updated")
             : CommandResult.Failure("Error updating Record");
     }

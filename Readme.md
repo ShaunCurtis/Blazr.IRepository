@@ -152,7 +152,7 @@ Picking it apart:
 
 ## The Implementation
 
-An alternative to the Repository patttern is CQS.  It's more verbose, but it implements some good practices that we could build into our implementation.
+An alternative to the Repository patttern is CQS.  It's more verbose, but it implements some good practices that we can use in our implementation.
 
 ### Requests and Results
 

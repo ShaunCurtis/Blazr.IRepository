@@ -5,8 +5,4 @@
 /// ============================================================
 namespace Blazr.Core;
 
-public sealed record FilterDefinition
-{
-    public string FilterName { get; init; } = string.Empty;
-    public string FilterData { get; init; } = string.Empty;
-}
+public sealed record FilterDefinition(string FilterName, string FilterData);

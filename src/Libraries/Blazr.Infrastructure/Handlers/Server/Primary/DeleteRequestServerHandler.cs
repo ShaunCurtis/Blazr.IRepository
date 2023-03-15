@@ -23,7 +23,7 @@ public sealed class DeleteRequestServerHandler<TDbContext>
         where TRecord : class, new()
     {
         // Try and get a registerted custom handler
-        var _customHandler = ActivatorUtilities.GetServiceOrCreateInstance<IDeleteRequestHandler<TRecord>>(_serviceProvider);
+        var _customHandler = _serviceProvider.GetService<IDeleteRequestHandler<TRecord>>();
 
         // If we get one then one is registered in DI and we execute it
         if (_customHandler is not null)

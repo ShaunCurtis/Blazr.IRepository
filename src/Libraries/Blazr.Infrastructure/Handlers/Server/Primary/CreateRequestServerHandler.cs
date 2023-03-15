@@ -15,7 +15,6 @@ public sealed class CreateRequestServerHandler<TDbContext>
     public CreateRequestServerHandler(IServiceProvider serviceProvider, CreateRequestBaseServerHandler<TDbContext> baseHandler)
     { 
         _serviceProvider = serviceProvider;
-        _serviceProvider = serviceProvider;
         _baseHandler = baseHandler;
     }
 

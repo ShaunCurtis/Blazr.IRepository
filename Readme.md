@@ -1,5 +1,7 @@
 # Rethinking the Repository Pattern
 
+> Version 2.0 - revised 15-Mar-2023
+
 ## Introduction
 
 This is no regurgitated how to build the classic `IRepository` in DotNetCore.  The implementation presented here is a very different animal.
@@ -22,6 +24,8 @@ How so:
 3. All standard Data I/O uses a single Data Broker.
 
 4. CQS practices and patterns creep into the design.
+ 
+5. The implementation supports both server and API infrastructures 
 
 ## Nomenclature, Terminology and Practices
 
@@ -146,13 +150,13 @@ Picking it apart:
 
 ## This Implementation
 
-An alternative to the Repository patttern is CQS.  It's more verbose, but it implements some good practices that we could build into our implementation.
+An alternative to the Repository patttern is CQS.  It's more verbose, but it implements some good practices that we can use in our implementation.
 
 ### Requests and Results
 
 Request objects encapulate what we request and the result objects the data and status information we expect back.  Thet are defined as records: defined once and then consumed.
 
-#### Commands
+### Commands
 
 A *Command* is a request to make a change to the data store: Create/Update/Delete operations.
 
@@ -183,7 +187,7 @@ public record CommandResult
 
 There's one exception to the return rule: the Id for an inserted record.  If you aren't using Guids to give your records unique identifiers, then the database generated Id should be considered a piece of status information!
 
-#### Item Requests
+### Item Requests
 
 A *Query* is a request to get data from the data store: no mutation.  We can define an item query like this:
 
@@ -214,23 +218,33 @@ public sealed record ItemQueryResult<TRecord>
 }
 ```
 
-#### List Queries
+### List Queries
 
 List queries present a few extra challenges.
 
 1. They should never request everything.  In edge conditions there may be 1,000,000+ rows in a table.  Every request should be constrained.  The request defines `StartIndex` and `PageSize` to both constrain the data and provide paging.  If you set the page size to 1,000,000, will your data pipeline and front end handle it gracefully?
-2. They need to handle sorting and filtering.  The request defines these as Linq Expressions.
+2. They need to handle sorting and filtering.
+   
+Sorting is relatively simple.  Provide a property name that can be resolved by Reflection and a direction.
+
+Filtering is messy.  The ideal solution would use Linq Expressions.  But they can't be passed over an API call.  This solution uses `FilterDefinition` colection to define the filters.  The `FilterDefinition` defines a named expression and a string containing a simnple value or Json object that the receiver knows how to resolve the name to a `Expression` and how to apply the provided data in the expression.  We'll see the process in action later.   
 
 ```csharp
-public sealed record ListQueryRequest<TRecord>
+public sealed record ListQueryRequest
 {
     public int StartIndex { get; init; } = 0;
     public int PageSize { get; init; } = 1000;
     public CancellationToken Cancellation { get; set; } = new ();
     public bool SortDescending { get; } = false;
-    public Expression<Func<TRecord, bool>>? FilterExpression { get; init; }
-    public Expression<Func<TRecord, object>>? SortExpression { get; init; }
+    public IEnumerable<FilterDefinition> Filters { get; init; } = Enumerable.Empty<FilterDefinition>();
+    public string SortField { get; init; } = string.Empty;
 }
+```
+
+`FilterDefinition` is a simple record.
+
+```csharp
+public sealed record FilterDefinition(string FilterName, string FilterData);
 ```
 
 The result returns the items, the total item count (for paging) and status information.  `Items` are always returned as `IEnumerable`.
@@ -253,13 +267,145 @@ public sealed record ListQueryResult<TRecord>
 }
 ```
 
+#### Sorting
+
+Define an interface for the sorter:
+
+```csharp
+public interface IRecordSorter<TRecord>
+    where TRecord : class
+{
+    public IQueryable<TRecord> AddSortToQuery(string fieldName, IQueryable<TRecord> query, bool sortDescending);
+}
+```
+
+And a base class to implement common functionality:
+
+```csharp
+public class RecordSortBase<TRecord>
+    where TRecord : class
+{
+    protected static IQueryable<TRecord> Sort(IQueryable<TRecord> query, bool sortDescending, Expression<Func<TRecord, object>> sorter)
+    {
+        return sortDescending
+            ? query.OrderByDescending(sorter)
+            : query.OrderBy(sorter);
+    }
+
+    protected static bool TryBuildSortExpression(string sortField, [NotNullWhen(true)] out Expression<Func<TRecord, object>>? expression)
+    {
+        expression = null;
+
+        Type recordType = typeof(TRecord);
+        PropertyInfo sortProperty = recordType.GetProperty(sortField)!;
+        if (sortProperty is null)
+            return false;
+
+        ParameterExpression parameterExpression = Expression.Parameter(recordType, "item");
+        MemberExpression memberExpression = Expression.Property((Expression)parameterExpression, sortField);
+        Expression propertyExpression = Expression.Convert(memberExpression, typeof(object));
+
+        expression = Expression.Lambda<Func<TRecord, object>>(propertyExpression, parameterExpression);
+
+        return true;
+    }
+}
+```
+
+And then the `WeatherForecast` implementation:
+
+```csharp
+public class WeatherForecastSorter : RecordSortBase<WeatherForecast>, IRecordSorter<WeatherForecast>
+{
+    public  IQueryable<WeatherForecast> AddSortToQuery(string fieldName, IQueryable<WeatherForecast> query, bool sortDescending)
+        => fieldName switch
+        {
+            WeatherForecastConstants.TemperatureC => Sort(query, sortDescending, OnTemperature),
+            WeatherForecastConstants.Summary => Sort(query, sortDescending, OnSummary),
+            _ => Sort(query, sortDescending, OnDate)
+        };
+
+    private static Expression<Func<WeatherForecast, object>> OnDate => item => item.Date;
+    private static Expression<Func<WeatherForecast, object>> OnTemperature => item => item.TemperatureC;
+    private static Expression<Func<WeatherForecast, object>> OnSummary => item => item.Summary ?? string.Empty;
+}
+```
+
+#### Filtering
+
+An interface. `AddFilterToQuery` adds the filter expression to the provided `IQueryable` instance.
+
+```csharp
+public interface IRecordFilter<TRecord>
+    where TRecord : class
+{
+    public IQueryable<TRecord> AddFilterToQuery(IEnumerable<FilterDefinition> filters, IQueryable<TRecord> query);
+}
+```
+
+And an implementation for `WeatherForecast`.  A switch atatemwent matches named expressions to the actual expressions and applies the provided data.
+
+```csharp
+public class WeatherForecastFilter : IRecordFilter<WeatherForecast>
+{
+    public IQueryable<WeatherForecast> AddFilterToQuery(IEnumerable<FilterDefinition> filters, IQueryable<WeatherForecast> query)
+    {
+        foreach (var filter in filters)
+        {
+            switch (filter.FilterName)
+            {
+                case WeatherForecastConstants.ByTemperature:
+                    if (BindConverter.TryConvertTo<int>(filter.FilterData, null, out int temperatureValue))
+                        query = query.Where(ByTemperature(temperatureValue));
+                    break;
+
+                case WeatherForecastConstants.BySummary:
+                    if (!string.IsNullOrWhiteSpace(filter.FilterData))
+                        query = query.Where(BySummary(filter.FilterData));
+                    break;
+
+                case WeatherForecastConstants.TemperatureLessThan:
+                    if (BindConverter.TryConvertTo<int>(filter.FilterData, null, out int value))
+                        query = query.Where(TemperatureLessThan(value));
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        if (query is IQueryable)
+            return query;
+
+        return query.AsQueryable();
+    }
+
+    private static Expression<Func<WeatherForecast, bool>> ByTemperature(int value) => item => item.TemperatureC.Equals(value);
+    private static Expression<Func<WeatherForecast, bool>> BySummary(string value) => item => item.Summary == value;
+    private static Expression<Func<WeatherForecast, bool>> TemperatureLessThan(int value) => item => item.TemperatureC < value;
+}
+```
+
+You will see these used shortly.  they are registered as transient DI services like this:
+
+```csharp
+services.AddTransient<IRecordSorter<WeatherForecast>, WeatherForecastSorter>();
+services.AddTransient<IRecordFilter<WeatherForecast>, WeatherForecastFilter>();
+```
+
 ### Handlers
 
 Handlers are small single purpose classes that handle requests and return results.  They abstract the nitty-gritty execution from the higher level Data Broker.
 
+Each process has at least two handlers.
+
+1. The base handler is a generic handler that implements the transaction against the data source.
+2. The primary handler manages which handler is called. If a custom handler is registered in DI for `TRecord` it will execute the custom handler, otherwise it will execute the base handler.
+3. The custom handler is a handler registered in DI against a specific record.
+
 #### Command Handlers
 
-The interface provides the abstraction.
+The interface provides the abstraction.  There's both a standard and generic implementation.
 
 ```csharp
 public interface ICreateRequestHandler
@@ -267,25 +413,37 @@ public interface ICreateRequestHandler
     public ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
         where TRecord : class, new();
 }
+
+public interface ICreateRequestHandler<TRecord>
+        where TRecord : class, new()
+{
+    public ValueTask<CommandResult> ExecuteAsync(CommandRequest<TRecord> request);
+}
+
 ```
 
-And the implementation does the real work.
+The base implementation does the real work.
 
 1. Injects the DBContext Factory.
 2. Implements *Unit of Work* Db contexts through the DbContext factory.
 3. Uses the Add method on the context to add the record to EF.
 4. Calls `SaveChangesAsync`, passing in the Cancellation token, and expects a single change to be reported.
 5. Provides status information if things go wrong.
+6. Logs information to the coinfigured logger.
 
 ```csharp
-public sealed class CreateRequestHandler<TDbContext>
+public sealed class CreateRequestBaseServerHandler<TDbContext>
     : ICreateRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
+    private ILogger<CreateRequestBaseServerHandler<TDbContext>> _logger;
 
-    public CreateRequestHandler(IDbContextFactory<TDbContext> factory)
-        => _factory = factory;
+    public CreateRequestBaseServerHandler(IDbContextFactory<TDbContext> factory, ILogger<CreateRequestBaseServerHandler<TDbContext>> logger)
+    {
+        _factory = factory;
+        _logger = logger;
+    }
 
     public async ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
         where TRecord : class, new()
@@ -296,9 +454,53 @@ public sealed class CreateRequestHandler<TDbContext>
         using var dbContext = _factory.CreateDbContext();
 
         dbContext.Add<TRecord>(request.Item);
-        return await dbContext.SaveChangesAsync(request.Cancellation) == 1
+
+        var recordsChanged = await dbContext.SaveChangesAsync(request.Cancellation);
+
+        if (recordsChanged != 1)
+            _logger.LogCritical($"{this.GetType().Name} failed to create the Record.  The returned update count was {recordsChanged}");
+
+        return recordsChanged == 1
             ? CommandResult.Success("Record Updated")
             : CommandResult.Failure("Error updating Record");
+    }
+}
+```
+
+And the primary implementation.
+
+1. Injects the IServiceProvider and base handler.
+2. Checks to see if a custom handler is registered in DI.
+3. If one is it executes it.
+4. Otherwise it executes the base handler.
+
+
+```csharp
+public sealed class CreateRequestServerHandler<TDbContext>
+    : ICreateRequestHandler
+    where TDbContext : DbContext
+{
+    private readonly IServiceProvider _serviceProvider;
+    private readonly CreateRequestBaseServerHandler<TDbContext> _baseHandler;
+
+    public CreateRequestServerHandler(IServiceProvider serviceProvider, CreateRequestBaseServerHandler<TDbContext> baseHandler)
+    { 
+        _serviceProvider = serviceProvider;
+        _baseHandler = baseHandler;
+    }
+
+    public async ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
+        where TRecord : class, new()
+    {
+        // Try and get a registerted custom handler
+        var _customHandler = _serviceProvider.GetService<ICreateRequestHandler<TRecord>>();
+
+        // If we get one then one is registered in DI and we execute it
+        if (_customHandler is not null)
+            return await _customHandler.ExecuteAsync(request);
+
+        // If there's no custom handler registered we run the base handler
+        return await _baseHandler.ExecuteAsync<TRecord>(request);
     }
 }
 ```
@@ -315,9 +517,15 @@ public interface IItemRequestHandler
     public ValueTask<ItemQueryResult<TRecord>> ExecuteAsync<TRecord>(ItemQueryRequest request)
         where TRecord : class, new();
 }
+
+public interface IItemRequestHandler<TRecord>
+        where TRecord : class, new()
+{
+    public ValueTask<ItemQueryResult<TRecord>> ExecuteAsync(ItemQueryRequest request);
+}
 ```
 
-And the server implementation. Note:
+The base implementation. Note:
 
 1. Injects the DBContext Factory.
 2. Implements *Unit of Work* Db contexts through the DbContext factory.
@@ -328,14 +536,18 @@ And the server implementation. Note:
 
 
 ```csharp
-public sealed class ItemRequestHandler<TDbContext>
+public sealed class ItemRequestBaseServerHandler<TDbContext>
     : IItemRequestHandler
     where TDbContext : DbContext
 {
     private readonly IDbContextFactory<TDbContext> _factory;
+    private ILogger<ItemRequestBaseServerHandler<TDbContext>> _logger;
 
-    public ItemRequestHandler(IDbContextFactory<TDbContext> factory)
-        => _factory = factory;
+    public ItemRequestBaseServerHandler(IDbContextFactory<TDbContext> factory, ILogger<ItemRequestBaseServerHandler<TDbContext>> logger)
+    {
+        _logger = logger;
+        _factory = factory;
+    }
 
     public async ValueTask<ItemQueryResult<TRecord>> ExecuteAsync<TRecord>(ItemQueryRequest request)
         where TRecord : class, new()
@@ -356,62 +568,190 @@ public sealed class ItemRequestHandler<TDbContext>
         if (record is null)
             record = await dbContext.FindAsync<TRecord>(request.Uid);
 
-        if (record is null)
+        if (record is null) {
+            _logger.LogCritical($"{this.GetType().Name} failed to find the Record with Uid: {request.Uid}");
             return ItemQueryResult<TRecord>.Failure("No record retrieved");
-
+    }
         return ItemQueryResult<TRecord>.Success(record);
     }
 }
 ```
+
+And the primary handler:
+
+```csharp
+public sealed class ItemRequestServerHandler<TDbContext>
+    : IItemRequestHandler
+    where TDbContext : DbContext
+{
+    private readonly IServiceProvider _serviceProvider;
+    private readonly ItemRequestBaseServerHandler<TDbContext> _baseHandler;
+
+    public ItemRequestServerHandler(IServiceProvider serviceProvider, ItemRequestBaseServerHandler<TDbContext> serverHandler)
+    {
+        _serviceProvider = serviceProvider;
+        _baseHandler = serverHandler;
+    }
+
+    public async ValueTask<ItemQueryResult<TRecord>> ExecuteAsync<TRecord>(ItemQueryRequest request)
+        where TRecord : class, new()
+    {
+        // Try and get a registered custom handler
+        var _customHandler = _serviceProvider.GetService<IItemRequestHandler<TRecord>>();
+
+        // If we get one then one is registered in DI and we execute it
+        if (_customHandler is not null)
+            return await _customHandler.ExecuteAsync(request);
+
+        // If there's no custom handler registered we run the base handler
+        return await _baseHandler.ExecuteAsync<TRecord>(request);
+    }
+}
+```
+
+
 #### List Request Handler
+
+The list request handler is the most complex and relies on quite a lot of infrastructure to operate.
 
 The interface.
 
 ```csharp
 public interface IListRequestHandler
 {
-    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest<TRecord> request)
+    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest request)
         where TRecord : class, new();
 }
+
+public interface IListRequestHandler<TRecord>
+    where TRecord : class, new()
+{
+    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync(ListQueryRequest request);
+}
 ```
-And implementation.
 
-Note there are two internal methods:
+The base implementation.  There's a lot going on so I'll break down into small sections:
 
-1. `_getItemsAsync` Gets the items.  This builds an `IQueryable` object and returns a materialized `IEnumerable`.  You must execute the query before the factory disposes the DbContext.
-2. `_getCountAsync` Gets the count of all the records based on the filter.
+Try and get sort and filter providers from DI for `TRecord`.  They will be null if none are registered.
 
 ```csharp
-    private async ValueTask<IEnumerable<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest<TRecord> request)
+        var sorterProvider = _serviceProvider.GetService<IRecordSorter<TRecord>>();
+        var filterProvider = _serviceProvider.GetService<IRecordFilter<TRecord>>();
+```
+
+Get a DbContext.  We don't need tracking as this is read only.  Gets the `IQueryable` object that represents the `TRecord`.
+
+```csharp
+    using var dbContext = _factory.CreateDbContext();
+    dbContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+
+    IQueryable<TRecord> query = dbContext.Set<TRecord>();
+```
+
+Add the filter to the query if one exists.
+
+```csharp
+if (filterProvider is not null)
+    query = filterProvider.AddFilterToQuery(request.Filters, query);
+```
+
+Get the total filtered record count by running a materialization against the query.  This will get translated into an efficient query against the data source.   The way the query gwets executed depends on whether we are doing any mocking so we test the type before attempting an asynchronous or synchronous call.
+
+```csharp
+    count = query is IAsyncEnumerable<TRecord>
+        ? await query.CountAsync(request.Cancellation)
+        : query.Count();
+```
+
+Next we add sorting to the query if a sort provider exists.
+
+```csharp
+    if (sorterProvider is not null)
+        query = sorterProvider.AddSortToQuery(request.SortField, query, request.SortDescending);
+```
+
+And paging.
+
+```csharp
+    if (request.PageSize > 0)
+        query = query
+            .Skip(request.StartIndex)
+            .Take(request.PageSize);
+```
+
+We then materialize the query to get the data set.
+
+```csharp
+    var list = query is IAsyncEnumerable<TRecord>
+        ? await query.ToListAsync()
+        : query.ToList();
+```
+
+And finally return the result.
+
+```csharp
+    return ListQueryResult<TRecord>.Success(list, count);
+```
+
+The purpoose is to build up the query in the most efficient way, taking advantage of `IQueryable` functionality to only materialize out the minimum data sets.
+
+Here's the full class.
+
+```csharp
+public sealed class ListRequestBaseServerHandler<TDbContext> : IListRequestHandler
+    where TDbContext : DbContext
+{
+    private readonly IDbContextFactory<TDbContext> _factory;
+    private readonly IServiceProvider _serviceProvider;
+    private ILogger<ListRequestBaseServerHandler<TDbContext>> _logger;
+
+    public ListRequestBaseServerHandler(IDbContextFactory<TDbContext> factory, IServiceProvider serviceProvider, ILogger<ListRequestBaseServerHandler<TDbContext>> logger)
+    {
+        _factory = factory;
+        _serviceProvider = serviceProvider;
+        _logger = logger;
+    }
+
+    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync<TRecord>(ListQueryRequest request)
+        where TRecord : class, new()
+            => _getItemsAsync<TRecord>(request);
+
+    private async ValueTask<ListQueryResult<TRecord>> _getItemsAsync<TRecord>(ListQueryRequest request)
         where TRecord : class, new()
     {
+        int count = 0;
         if (request == null)
             throw new DataPipelineException($"No ListQueryRequest defined in {this.GetType().FullName}");
+
+        var sorterProvider = _serviceProvider.GetService<IRecordSorter<TRecord>>();
+        var filterProvider = _serviceProvider.GetService<IRecordFilter<TRecord>>();
 
         using var dbContext = _factory.CreateDbContext();
         dbContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
 
         IQueryable<TRecord> query = dbContext.Set<TRecord>();
-        if (request.FilterExpression is not null)
-            query = query
-                .Where(request.FilterExpression)
-                .AsQueryable();
+        if (filterProvider is not null)
+            query = filterProvider.AddFilterToQuery(request.Filters, query);
 
-        if (request.SortExpression is not null)
+        count = query is IAsyncEnumerable<TRecord>
+            ? await query.CountAsync(request.Cancellation)
+            : query.Count();
 
-            query = request.SortDescending
-                ? query.OrderByDescending(request.SortExpression)
-                : query.OrderBy(request.SortExpression);
+        if (sorterProvider is not null)
+            query = sorterProvider.AddSortToQuery(request.SortField, query, request.SortDescending);
 
         if (request.PageSize > 0)
             query = query
                 .Skip(request.StartIndex)
                 .Take(request.PageSize);
 
-        return query is IAsyncEnumerable<TRecord>
+        var list = query is IAsyncEnumerable<TRecord>
             ? await query.ToListAsync()
             : query.ToList();
+
+        return ListQueryResult<TRecord>.Success(list, count);
     }
+}
 ```
 
 ### The Repository Class Replacement
@@ -423,7 +763,7 @@ The very important bit is the generic `TRecord` definition on each method, not o
 ```csharp
 public interface IDataBroker
 {
-    public ValueTask<ListQueryResult<TRecord>> GetItemsAsync<TRecord>(ListQueryRequest<TRecord> request) where TRecord : class, new();
+    public ValueTask<ListQueryResult<TRecord>> GetItemsAsync<TRecord>(ListQueryRequest request) where TRecord : class, new();
     public ValueTask<ItemQueryResult<TRecord>> GetItemAsync<TRecord>(ItemQueryRequest request) where TRecord : class, new();
     public ValueTask<CommandResult> UpdateItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new();
     public ValueTask<CommandResult> CreateItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new();
@@ -459,7 +799,7 @@ public sealed class RepositoryDataBroker : IDataBroker
     public ValueTask<ItemQueryResult<TRecord>> GetItemAsync<TRecord>(ItemQueryRequest request) where TRecord : class, new()
         => _itemRequestHandler.ExecuteAsync<TRecord>(request);
 
-    public ValueTask<ListQueryResult<TRecord>> GetItemsAsync<TRecord>(ListQueryRequest<TRecord> request) where TRecord : class, new()
+    public ValueTask<ListQueryResult<TRecord>> GetItemsAsync<TRecord>(ListQueryRequest request) where TRecord : class, new()
         => _listRequestHandler.ExecuteAsync<TRecord>(request);
 
     public ValueTask<CommandResult> CreateItemAsync<TRecord>(CommandRequest<TRecord> request) where TRecord : class, new()
@@ -477,36 +817,55 @@ public sealed class RepositoryDataBroker : IDataBroker
 
 We can now define a set of tests for the data broker.  I've included two here.  The rest are in the Repo.
 
-First two methods to create our root DI container and populate the database.
+First a static class to create our root DI container and populate the database.
 
 ```csharp
-private ServiceProvider BuildRootContainer()
+public static class ServiceContainers
 {
-    var services = new ServiceCollection();
+    public static ServiceProvider BuildRootContainer()
+    {
+        var services = new ServiceCollection();
 
-    // Define the DbSet and Server Type for the DbContext Factory
-    services.AddDbContextFactory<InMemoryWeatherDbContext>(options
-        => options.UseInMemoryDatabase($"WeatherDatabase-{Guid.NewGuid().ToString()}"));
-    // Define the Broker and Handlers
-    services.AddScoped<IDataBroker, RepositoryDataBroker>();
-    services.AddScoped<IListRequestHandler, ListRequestHandler<InMemoryWeatherDbContext>>();
-    services.AddScoped<IItemRequestHandler, ItemRequestHandler<InMemoryWeatherDbContext>>();
-    services.AddScoped<IUpdateRequestHandler, UpdateRequestHandler<InMemoryWeatherDbContext>>();
-    services.AddScoped<ICreateRequestHandler, CreateRequestHandler<InMemoryWeatherDbContext>>();
-    services.AddScoped<IDeleteRequestHandler, DeleteRequestHandler<InMemoryWeatherDbContext>>();
+        // Define the DbSet and Server Type for the DbContext Factory
+        services.AddDbContextFactory<InMemoryWeatherDbContext>(options
+            => options.UseInMemoryDatabase($"WeatherDatabase-{Guid.NewGuid().ToString()}"));
+        // Define the Broker and Handlers
+        services.AddScoped<IDataBroker, RepositoryDataBroker>();
+        
+        // Add the Standard Handlers
+        services.AddScoped<IListRequestHandler, ListRequestServerHandler<InMemoryWeatherDbContext>>();
+        services.AddScoped<IItemRequestHandler, ItemRequestServerHandler<InMemoryWeatherDbContext>>();
+        services.AddScoped<IUpdateRequestHandler, UpdateRequestServerHandler<InMemoryWeatherDbContext>>();
+        services.AddScoped<ICreateRequestHandler, CreateRequestServerHandler<InMemoryWeatherDbContext>>();
+        services.AddScoped<IDeleteRequestHandler, DeleteRequestServerHandler<InMemoryWeatherDbContext>>();
 
-    // Create the container
-    return services.BuildServiceProvider();
-}
+        // Add the Base Handlers
+        services.AddScoped<ListRequestBaseServerHandler<InMemoryWeatherDbContext>>();
+        services.AddScoped<ItemRequestBaseServerHandler<InMemoryWeatherDbContext>>();
+        services.AddScoped<UpdateRequestBaseServerHandler<InMemoryWeatherDbContext>>();
+        services.AddScoped<CreateRequestBaseServerHandler<InMemoryWeatherDbContext>>();
+        services.AddScoped<DeleteRequestBaseServerHandler<InMemoryWeatherDbContext>>();
 
-private IDbContextFactory<InMemoryWeatherDbContext> GetPopulatedFactory(IServiceProvider provider)
-{
-    // get the DbContext factory and add the test data
-    var factory = provider.GetService<IDbContextFactory<InMemoryWeatherDbContext>>();
-    if (factory is not null)
-        WeatherTestDataProvider.Instance().LoadDbContext<InMemoryWeatherDbContext>(factory);
+        // Add the custom sort and filter proividers
+        services.AddTransient<IRecordSorter<WeatherForecast>, WeatherForecastSorter>();
+        services.AddTransient<IRecordFilter<WeatherForecast>, WeatherForecastFilter>();
 
-    return factory!;
+        //Define the ILogger
+        services.AddLogging(builder => builder.AddDebug());
+
+        // Create the container
+        return services.BuildServiceProvider();
+    }
+
+    public static IDbContextFactory<InMemoryWeatherDbContext> GetPopulatedFactory(IServiceProvider provider)
+    {
+        // get the DbContext factory and add the test data
+        var factory = provider.GetService<IDbContextFactory<InMemoryWeatherDbContext>>();
+        if (factory is not null)
+            WeatherTestDataProvider.Instance().LoadDbContext<InMemoryWeatherDbContext>(factory);
+
+        return factory!;
+    }
 }
 ```
 
@@ -520,14 +879,14 @@ public async Task GetItemsTest()
     var testProvider = WeatherTestDataProvider.Instance();
 
     // Build the root DI Container
-    var rootProvider = this.BuildRootContainer();
+    var rootProvider = ServiceContainers.BuildRootContainer();
 
     //define a scoped container
     var providerScope = rootProvider.CreateScope();
     var provider = providerScope.ServiceProvider;
 
     // get the DbContext factory and add the test data
-    var factory = this.GetPopulatedFactory(provider);
+    var factory = ServiceContainers.GetPopulatedFactory(provider);
 
     // Check we can retrieve thw first 1000 records
     var dbContext = factory!.CreateDbContext();
@@ -535,11 +894,13 @@ public async Task GetItemsTest()
 
     var databroker = provider.GetRequiredService<IDataBroker>();
 
-    var request = new ListQueryRequest<WeatherForecast>();
+    var request = new ListQueryRequest();
     var result = await databroker.GetItemsAsync<WeatherForecast>(request);
 
+    var expectedCount = testProvider.WeatherForecasts.Count();
+
     Assert.NotNull(result);
-    Assert.Equal(testProvider.WeatherForecasts.Count(), result.TotalCount);
+    Assert.Equal(expectedCount, result.TotalCount);
 
     providerScope.Dispose();
     rootProvider.Dispose();
@@ -555,14 +916,14 @@ public async Task AddItemTest()
     var testProvider = WeatherTestDataProvider.Instance();
 
     // Build the root DI Container
-    var rootProvider = this.BuildRootContainer();
+    var rootProvider = ServiceContainers.BuildRootContainer();
 
     //define a scoped container
     var providerScope = rootProvider.CreateScope();
     var provider = providerScope.ServiceProvider;
 
     // get the DbContext factory and add the test data
-    var factory = this.GetPopulatedFactory(provider);
+    var factory = ServiceContainers.GetPopulatedFactory(provider);
 
     // Check we can retrieve thw first 1000 records
     var dbContext = factory!.CreateDbContext();
@@ -581,26 +942,6 @@ public async Task AddItemTest()
         Assert.NotNull(result);
         Assert.True(result.Successful);
     }
-
-    // Get the new record
-    {
-        var request = new ItemQueryRequest() { Uid = newRecord.Uid };
-        var result = await databroker.GetItemAsync<WeatherForecast>(request);
-
-        Assert.Equal(newRecord, result.Item);
-    }
-
-    // Check the record count has incremented
-    {
-        var request = new ListQueryRequest<WeatherForecast>();
-        var result = await databroker.GetItemsAsync<WeatherForecast>(request);
-
-        Assert.NotNull(result);
-        Assert.Equal(testProvider.WeatherForecasts.Count() + 1, result.TotalCount);
-    }
-
-    providerScope.Dispose();
-    rootProvider.Dispose();
 }
 ```
 
@@ -741,3 +1082,13 @@ public sealed class InMemoryWeatherDbContext
         => modelBuilder.Entity<WeatherForecast>().ToTable("WeatherForecast");
 }
 ```
+
+## Updates
+
+### Version 2
+
+15-Mar-2023
+
+1. Updated the Handler structure to handle custom handlers for specific data records.
+2. Updated the ListRequest to remove the `Expression` dependancies for sorting and filtering, and make the object API compliant.
+3. Restructuring the directory and project structure to my latest design.  Splitting out application code into separate libraries.  

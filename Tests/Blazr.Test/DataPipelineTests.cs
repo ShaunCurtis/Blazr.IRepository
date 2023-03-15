@@ -1,37 +1,13 @@
+/// ============================================================
+/// Author: Shaun Curtis, Cold Elm Coders
+/// License: Use And Donate
+/// If you use it, donate something to a charity somewhere
+/// ============================================================
+
 namespace Blazr.Test;
 
 public class DataPipelineTests
 {
-    private ServiceProvider BuildRootContainer()
-    {
-        var services = new ServiceCollection();
-
-        // Define the DbSet and Server Type for the DbContext Factory
-        services.AddDbContextFactory<InMemoryWeatherDbContext>(options
-            => options.UseInMemoryDatabase($"WeatherDatabase-{Guid.NewGuid().ToString()}"));
-        // Define the Broker and Handlers
-        services.AddScoped<IDataBroker, RepositoryDataBroker>();
-        services.AddScoped<IListRequestHandler, ListRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddScoped<IItemRequestHandler, ItemRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddScoped<IUpdateRequestHandler, UpdateRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddScoped<ICreateRequestHandler, CreateRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddScoped<IDeleteRequestHandler, DeleteRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddLogging(builder => builder.AddDebug());
-
-        // Create the container
-        return services.BuildServiceProvider();
-    }
-
-    private IDbContextFactory<InMemoryWeatherDbContext> GetPopulatedFactory(IServiceProvider provider)
-    {
-        // get the DbContext factory and add the test data
-        var factory = provider.GetService<IDbContextFactory<InMemoryWeatherDbContext>>();
-        if (factory is not null)
-            WeatherTestDataProvider.Instance().LoadDbContext<InMemoryWeatherDbContext>(factory);
-
-        return factory!;
-    }
-
     [Fact]
     public async Task DBContextTest()
     {
@@ -79,14 +55,14 @@ public class DataPipelineTests
         var testProvider = WeatherTestDataProvider.Instance();
 
         // Build the root DI Container
-        var rootProvider = this.BuildRootContainer();
+        var rootProvider = ServiceContainers.BuildRootContainer();
 
         //define a scoped container
         var providerScope = rootProvider.CreateScope();
         var provider = providerScope.ServiceProvider;
 
         // get the DbContext factory and add the test data
-        var factory = this.GetPopulatedFactory(provider);
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
 
         // Check we can retrieve thw first 1000 records
         var dbContext = factory!.CreateDbContext();
@@ -97,8 +73,126 @@ public class DataPipelineTests
         var request = new ListQueryRequest();
         var result = await databroker.GetItemsAsync<WeatherForecast>(request);
 
+        var expectedCount = testProvider.WeatherForecasts.Count();
+
         Assert.NotNull(result);
-        Assert.Equal(testProvider.WeatherForecasts.Count(), result.TotalCount);
+        Assert.Equal(expectedCount, result.TotalCount);
+
+        providerScope.Dispose();
+        rootProvider.Dispose();
+    }
+
+    [Fact]
+    public async Task GetSortedItemsTest()
+    {
+        // Get our test provider to use as our control
+        var testProvider = WeatherTestDataProvider.Instance();
+
+        // Build the root DI Container
+        var rootProvider = ServiceContainers.BuildRootContainer();
+
+        //define a scoped container
+        var providerScope = rootProvider.CreateScope();
+        var provider = providerScope.ServiceProvider;
+
+        // get the DbContext factory and add the test data
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
+
+        // Check we can retrieve thw first 1000 records
+        var dbContext = factory!.CreateDbContext();
+        Assert.NotNull(dbContext);
+
+        var databroker = provider.GetRequiredService<IDataBroker>();
+
+        var request = new ListQueryRequest() { SortDescending=false, SortField = WeatherForecastConstants.Summary };
+
+        var result = await databroker.GetItemsAsync<WeatherForecast>(request);
+
+        var expectedCount = testProvider.WeatherForecasts.Count();
+
+        Assert.NotNull(result);
+        Assert.Equal(expectedCount, result.TotalCount);
+        Assert.Equal("Balmy" , result.Items.First().Summary);
+        Assert.Equal("Balmy", result.Items.Skip(1).First().Summary);
+        Assert.Equal("Balmy", result.Items.Skip(2).First().Summary);
+
+        providerScope.Dispose();
+        rootProvider.Dispose();
+    }
+
+
+    [Theory]
+    [InlineData(10) ]
+    [InlineData(20)]
+    public async Task GetSortedAndPagedItemsTest(int pageSize)
+    {
+        // Get our test provider to use as our control
+        var testProvider = WeatherTestDataProvider.Instance();
+
+        // Build the root DI Container
+        var rootProvider = ServiceContainers.BuildRootContainer();
+
+        //define a scoped container
+        var providerScope = rootProvider.CreateScope();
+        var provider = providerScope.ServiceProvider;
+
+        // get the DbContext factory and add the test data
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
+
+        // Check we can retrieve thw first 1000 records
+        var dbContext = factory!.CreateDbContext();
+        Assert.NotNull(dbContext);
+
+        var databroker = provider.GetRequiredService<IDataBroker>();
+
+        var request = new ListQueryRequest() { SortDescending = false, SortField = WeatherForecastConstants.Summary, StartIndex = 0, PageSize=pageSize };
+
+        var result = await databroker.GetItemsAsync<WeatherForecast>(request);
+
+        var expectedCount = testProvider.WeatherForecasts.Count();
+
+        Assert.NotNull(result);
+        Assert.Equal(expectedCount, result.TotalCount);
+        Assert.Equal("Balmy", result.Items.First().Summary);
+        Assert.Equal("Balmy", result.Items.Skip(1).First().Summary);
+        Assert.Equal("Balmy", result.Items.Skip(2).First().Summary);
+        Assert.Equal(pageSize , result.Items.Count());
+
+        providerScope.Dispose();
+        rootProvider.Dispose();
+    }
+
+    [Fact]
+    public async Task GetFilteredItemsTest()
+    {
+        // Get our test provider to use as our control
+        var testProvider = WeatherTestDataProvider.Instance();
+
+        // Build the root DI Container
+        var rootProvider = ServiceContainers.BuildRootContainer();
+
+        //define a scoped container
+        var providerScope = rootProvider.CreateScope();
+        var provider = providerScope.ServiceProvider;
+
+        // get the DbContext factory and add the test data
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
+
+        // Check we can retrieve thw first 1000 records
+        var dbContext = factory!.CreateDbContext();
+        Assert.NotNull(dbContext);
+
+        var databroker = provider.GetRequiredService<IDataBroker>();
+
+        var filters = new List<FilterDefinition> { new(WeatherForecastConstants.BySummary, "Balmy") };
+        var request = new ListQueryRequest() { SortDescending = false, Filters = filters };
+
+        var result = await databroker.GetItemsAsync<WeatherForecast>(request);
+
+        var expectedCount = testProvider.WeatherForecasts.Where(item => item.Summary == "Balmy").Count();
+
+        Assert.NotNull(result);
+        Assert.Equal(expectedCount, result.TotalCount);
 
         providerScope.Dispose();
         rootProvider.Dispose();
@@ -111,14 +205,14 @@ public class DataPipelineTests
         var testProvider = WeatherTestDataProvider.Instance();
 
         // Build the root DI Container
-        var rootProvider = this.BuildRootContainer();
+        var rootProvider = ServiceContainers.BuildRootContainer();
 
         //define a scoped container
         var providerScope = rootProvider.CreateScope();
         var provider = providerScope.ServiceProvider;
 
         // get the DbContext factory and add the test data
-        var factory = this.GetPopulatedFactory(provider);
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
 
         // Check we can retrieve thw first 1000 records
         var dbContext = factory!.CreateDbContext();
@@ -147,14 +241,14 @@ public class DataPipelineTests
         var testProvider = WeatherTestDataProvider.Instance();
 
         // Build the root DI Container
-        var rootProvider = this.BuildRootContainer();
+        var rootProvider = ServiceContainers.BuildRootContainer();
 
         //define a scoped container
         var providerScope = rootProvider.CreateScope();
         var provider = providerScope.ServiceProvider;
 
         // get the DbContext factory and add the test data
-        var factory = this.GetPopulatedFactory(provider);
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
 
         // Check we can retrieve thw first 1000 records
         var dbContext = factory!.CreateDbContext();
@@ -195,14 +289,14 @@ public class DataPipelineTests
         var testProvider = WeatherTestDataProvider.Instance();
 
         // Build the root DI Container
-        var rootProvider = this.BuildRootContainer();
+        var rootProvider = ServiceContainers.BuildRootContainer();
 
         //define a scoped container
         var providerScope = rootProvider.CreateScope();
         var provider = providerScope.ServiceProvider;
 
         // get the DbContext factory and add the test data
-        var factory = this.GetPopulatedFactory(provider);
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
 
         // Check we can retrieve thw first 1000 records
         var dbContext = factory!.CreateDbContext();
@@ -250,14 +344,14 @@ public class DataPipelineTests
         var testProvider = WeatherTestDataProvider.Instance();
 
         // Build the root DI Container
-        var rootProvider = this.BuildRootContainer();
+        var rootProvider = ServiceContainers.BuildRootContainer();
 
         //define a scoped container
         var providerScope = rootProvider.CreateScope();
         var provider = providerScope.ServiceProvider;
 
         // get the DbContext factory and add the test data
-        var factory = this.GetPopulatedFactory(provider);
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
 
         // Check we can retrieve thw first 1000 records
         var dbContext = factory!.CreateDbContext();

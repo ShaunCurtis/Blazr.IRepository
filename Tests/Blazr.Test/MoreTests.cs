@@ -1,38 +1,13 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
+/// ============================================================
+/// Author: Shaun Curtis, Cold Elm Coders
+/// License: Use And Donate
+/// If you use it, donate something to a charity somewhere
+/// ============================================================
 
 namespace Blazr.Test;
 
 public class MoreTests
 {
-    private ServiceProvider BuildRootContainer()
-    {
-        var services = new ServiceCollection();
-
-        // Define the DbSet and Server Type for the DbContext Factory
-        services.AddDbContextFactory<InMemoryWeatherDbContext>(options
-            => options.UseInMemoryDatabase($"WeatherDatabase-{Guid.NewGuid().ToString()}"));
-        // Define the Broker and Handlers
-        services.AddScoped<IDataBroker, RepositoryDataBroker>();
-        services.AddScoped<IListRequestHandler, ListRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddScoped<IItemRequestHandler, ItemRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddScoped<IUpdateRequestHandler, UpdateRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddScoped<ICreateRequestHandler, CreateRequestServerHandler<InMemoryWeatherDbContext>>();
-        services.AddScoped<IDeleteRequestHandler, DeleteRequestServerHandler<InMemoryWeatherDbContext>>();
-
-        // Create the container
-        return services.BuildServiceProvider();
-    }
-
-    private IDbContextFactory<InMemoryWeatherDbContext> GetPopulatedFactory(IServiceProvider provider)
-    {
-        // get the DbContext factory and add the test data
-        var factory = provider.GetService<IDbContextFactory<InMemoryWeatherDbContext>>();
-        if (factory is not null)
-            WeatherTestDataProvider.Instance().LoadDbContext<InMemoryWeatherDbContext>(factory);
-
-        return factory!;
-    }
 
     [Fact]
     public async Task DBContextTest()
@@ -81,14 +56,14 @@ public class MoreTests
         var testProvider = WeatherTestDataProvider.Instance();
 
         // Build the root DI Container
-        var rootProvider = this.BuildRootContainer();
+        var rootProvider = ServiceContainers.BuildRootContainer();
 
         //define a scoped container
         var providerScope = rootProvider.CreateScope();
         IServiceProvider provider = providerScope.ServiceProvider;
 
         // get the DbContext factory and add the test data
-        var factory = this.GetPopulatedFactory(provider);
+        var factory = ServiceContainers.GetPopulatedFactory(provider);
 
         // Check we can retrieve thw first 1000 records
         var dbContext = factory!.CreateDbContext();

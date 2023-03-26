@@ -6,6 +6,7 @@ MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{FEC063BB-7E10-449B-BA5A-EA0A19906782}"
 	ProjectSection(SolutionItems) = preProject
 		Readme.md = Readme.md
+		Who-Needs-IRepository.md = Who-Needs-IRepository.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Src", "Src", "{C01F4A66-574A-4274-BC76-27B25B753F86}"
@@ -22,7 +23,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blazr.Core", "src\Libraries
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blazr.Infrastructure", "src\Libraries\Blazr.Infrastructure\Blazr.Infrastructure.csproj", "{DDBE4715-78A4-4A4B-B3BE-A3C28F2BC1CE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Blazr.App.Core", "src\Application\Blazr.App.Core\Blazr.App.Core.csproj", "{44239515-3B83-4837-AC35-2E8EABE84E61}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blazr.App.Core", "src\Application\Blazr.App.Core\Blazr.App.Core.csproj", "{44239515-3B83-4837-AC35-2E8EABE84E61}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blazr.App.Infrastructure", "src\Application\Blazr.App.Infrastructure\Blazr.App.Infrastructure.csproj", "{1414B78A-A036-4678-89D7-2B8E8AFD798E}"
 EndProject

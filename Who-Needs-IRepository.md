@@ -1,55 +1,160 @@
-# Do I Really Need the IRepository and Unit of Work Patterns
+# Are the IRepository and Unit of Work Patterns Redundant?
 
-IRepository has come close to being the standard pattern in database access in small to medium projects.  Combined with the *Unit of Work* pattern, it's seen as an ideal solution to abstract data access and persistance from the core application code.
+*IRepository*, combined with the *Unit of Work* pattern, is close to being the *defacto* standard pattern for database access in small to medium projects.  In the DotNetCore context, it's almost always implementated over Entity Framework[EF].  
 
-In DotNetCore solutions it nearly always implemented over Entity Framework[EF].  What at first seems logical [and good practice], turns out to be illogical on closer inspection.  It wasn't always so: it was a logical approach when using early versions of EF.  Today EF implements those patterns itself, so implementing basically the same pattern twice is not productive.
+This article examines why in many cases this adds unnecessary layers of code, complexity and repetition with no benefits.
 
-Consider:
+## Why?
+
+Consider the following fairly classic `IRepository` interface.
+
+```csharp
+public interface IRepository<T> 
+{        
+    public IEnumerable<T> Get();        
+    public T GetByID(int Id);        
+    public void Create(T record);        
+    public void Delete(T record);        
+    public void Update(T record);        
+}
+```
+
+And implementation.
+
+```csharp
+public class WeatherForecastRepository<WeatherForecast> 
+{        
+    public IEnumerable<WeatherForecast> Get();        
+    public WeatherForecast GetByID(int Id);        
+    public void Create(WeatherForecast record);        
+    public void Delete(WeatherForecast record);        
+    public void Update(WeatherForecast record);        
+}
+```
+
+Then consider:
 
 ```csharp
 public DbSet<WeatherForecast> WeatherForecast { get; set; }
 ```
 
-`DbSet` is a Repository.  It implements *CRUD* and list operations on the `WeatherForecast` record.
-
 You have:
 
-1. dbContext.Add<TRecord>(record);
-1. dbContext.Update<TRecord>(record);
-1. dbContext.Remove<TRecord>(record);
-1. dbContext.Update<TRecord>(record);
-1. dbContext.Find{Async}<TRecord>(id);
+1. WeatherForecast.Add(record);
+1. WeatherForecast.Update(record);
+1. WeatherForecast.Remove(record);
+1. WeatherForecast.Update(record);
+1. WeatherForecast.Find{Async}(id);
 
 And the DbSet itself implements `IQueryable` and thus `IEnumerable` for *get many* operations.
 
-Add the `DbContextFactory` and you have Unit of Work:
+These look similar because `DbSet` implements the `IRepositiory` pattern.
+
+You then implement a *Unit of Work* pattern and get:
 
 ```csharp
-using var dbContext = _factory.CreateDbContext();
-dbContext.Add<TRecord>(record);
-var recordsChanged = await dbContext.SaveChangesAsync(cancellationToken);
+  private UnitOfWork _unitOfWork;
+
+  public void Create(WeatherForecast weatherForecast)
+  {
+        _unitOfWork.WeatherForecastRepository.Create(myNewRecord);
+        _unitOfWork.Save();
+  }
 ```
+
+Written directly against an `IDbContextFactory`:
+
+```csharp
+  private IDbContextFactory _factory;
+
+  public void Create(WeatherForecast weatherForecast)
+  {
+        using var dbContext = _factory.CreateDbContext();
+        dbContext.Add<TRecord>(request.Item);
+        var recordsChanged = await dbContext.SaveChanges();
+  }
+```
+
+### Going Generic
+
+The classic `IRepository` pattern builds a Repository class for each data entity.  The `DbContext` has a `Set<T>` method that returns the `DbSet` object for `T`, and a generic `Add<T>`.
+
+```csharp
+public void Create<TRecord>(TRecord record)
+{
+    using var dbContext = _factory.CreateDbContext();
+    // dbContext.Set<TRecord>().Add(record);
+    dbContext.Add<TRecord>(record);
+    var recordsChanged = await dbContext.SaveChanges();
+}
+```
+
+### Going Async
+
+Most database activity is now asynchronous.  EF is no exception.
+
+```csharp
+public ValueTask CreateAsync<TRecord>(TRecord record)
+{
+    using var dbContext = _factory.CreateDbContext();
+    dbContext.Add<TRecord>(record);
+    var recordsChanged = await dbContext.SaveChangesAsync();
+}
+```
+
+### Collapsing the Data Pipeline
 
 This raises an important question:
 
 > Why shouldn't I just access the `IDbContextFactory` from my presentation or business logic code in the Core Domain?  I'm using an abstraction - the `IDbContextFactory`.
 
-There are three primary reasons why not.
+Something like:
+
+```csharp
+public sealed class WeatherForecastEditPresenter
+{
+    private readonly IDbContextFactory<InMemoryWeatherDbContext> _factory;
+
+    public WeatherForecastEditPresenter(IDbContextFactory<InMemoryWeatherDbContext> factory)
+        => _factory = factory;
+
+    //....
+
+    public async ValueTask UpdateForecastAsync(WeatherForecast weatherForecast)
+    {
+        using var dbContext = _factory.CreateDbContext();
+        dbContext.Add<WeatherForecast>(weatherForecast);
+        var recordsChanged = await dbContext.SaveChangesAsync();
+
+        if (recordsChanged != 1)
+        {
+            // Do somthing
+        }
+    }
+}
+```
+
+There are several reasons why not.
 
 1. You're breaking a core tenet of Clean design - a dependancy on the Infrastructure layer.
-2. While `IDbContextFactory` is an interface, it's not an abstraction.  You still need to implement some nitty gritty code infrastructure code in the core domain.
-3. Your business/present object will inevitably break the *single responsibility principle* by doing whatever it does AND manage the data pipeline.
-4.  While not impossible, it's much easier to mock an abstrsction layer than a `DbSet` for testing.
+1. While `IDbContextFactory` is an interface, it's not an abstraction.  You still need to implement some nitty gritty code infrastructure code in the core domain.
+1. Your business/present object will inevitably break the *single responsibility principle* by doing whatever it does AND manage the data pipeline.
+1. You can't implement this is a API based data pipeline.
+1.  While not impossible, it's much easier to mock an abstraction layer than a `DbSet` for testing.
+
+## The Data Broker
 
 The solution is to build a *shim* to provide the interface between the consumers in the Core domain and the `IDbContextFactory`. 
 
 > A shim is *a washer or thin strip of material used to align parts, make them fit.* 
 
-In software terms, a *shim* is a thin layer of code that connects two domains.  We'll call our shim a broker.
+In software terms, a *shim* is a thin layer of code that connects two domains.  Brokers are shim services: the plugs and sockets between domains.
 
-Let's look in detail at how we implement this, and specifically at *Update*.
+Let's look in detail at how the data broker is implemented: specifically *Update*.
 
-An `IDataBroker` interface provides the abstraction between the domains by defining a contract definition for the data pipeline.
+### IDataBroker and the support Objects
+
+`IDataBroker` defines the contract definition for the data pipeline between the *Core* and *Infrastructure* domains.
 
 ```csharp
 public interface IDataBroker
@@ -58,6 +163,8 @@ public interface IDataBroker
     //....
 }
 ```
+
+This introduces two further design practices: all requests are encapsulated in request objects and all return values are encapsulated in result objects.
 
 The `CommandRequest` looks like this:
 
@@ -80,7 +187,7 @@ public sealed record CommandResult
 }
 ```
 
-We can then create the server side implementation.  This implements the Unit of Work pattern and deals with all the error and exception nitty gritty.
+The server side code implements the *Unit of Work* pattern and deals with all the error and exception nitty gritty.
 
 ```
 public sealed class ServerDataBroker : IDataBroker
@@ -117,9 +224,9 @@ public sealed class ServerDataBroker : IDataBroker
 }
 ```
 
-We can abstract this code further to handle custom updates.
+This works for standard simple data classes, but we may need to implement custom code for a complex object such as a shopping basket or invoice.
 
-First we abstract the code above into a base or default handler for updates.
+First, abstract the code above into a base or default handler.
 
 
 ```csharp
@@ -160,7 +267,7 @@ public sealed class UpdateRequestBaseServerHandler<TDbContext>
 
 And then create the main handler.
 
-The key activity here is we inject the `IServiceProvider` and then manually attempt to get `IUpdateRequestHandler<TRecord>` i.e. a custom hanlder for `TRecord` registered with thw DI Service container.  We don't inject it directly as it may not exist.  If it exists we execute it, if it doesn't we use thw default handler.  
+The key is to inject the `IServiceProvider` and then manually attempt to get `IUpdateRequestHandler<TRecord>` i.e. a custom handler for `TRecord` registered with the DI Service container.  We can't inject it directly in the constructor because, if it doesn't exist, the service container will throw an exception.  If it exists execute it, if not execute the default handler.  
 
 ```csharp
 public sealed class UpdateRequestServerHandler<TDbContext>

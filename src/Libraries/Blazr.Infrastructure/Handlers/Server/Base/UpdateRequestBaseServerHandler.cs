@@ -18,6 +18,7 @@ public sealed class UpdateRequestBaseServerHandler<TDbContext>
         _logger = logger;
         _factory = factory;
     }
+
     public async ValueTask<CommandResult> ExecuteAsync<TRecord>(CommandRequest<TRecord> request)
         where TRecord : class, new()
     {

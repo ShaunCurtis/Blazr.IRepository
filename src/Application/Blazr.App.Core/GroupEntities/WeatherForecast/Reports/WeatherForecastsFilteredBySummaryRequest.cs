@@ -3,16 +3,16 @@
 /// License: Use And Donate
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
-using System.Linq.Expressions;
 
-namespace Blazr.Core;
+namespace Blazr.App.Core;
 
-public record ReportQueryRequest<TRecord>
+public record WeatherForecastsFilteredBySummaryRequest : IReportRequest
 {
+    public string ReportName { get; init; } = string.Empty;
+    public string? Summary { get; init; }
     public int StartIndex { get; init; } = 0;
     public int PageSize { get; init; } = 1000;
     public CancellationToken CancellationToken { get; set; } = new();
-    public Expression<Func<TRecord, bool>>? Filter { get; set; }
-    public Expression<Func<TRecord, object>>? Sorter { get; set; }
+    public string? SortField { get; init; }
     public bool SortDescending { get; init; } = false;
 }

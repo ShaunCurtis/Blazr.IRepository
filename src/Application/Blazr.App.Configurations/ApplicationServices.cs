@@ -11,7 +11,7 @@ public static class ApplicationServices
     public static void AddAppServerDataServices<TDbContext>(this IServiceCollection services, Action<DbContextOptionsBuilder> options) where TDbContext : DbContext
     {
         services.AddDbContextFactory<TDbContext>(options);
-        services.AddScoped<IDataBroker, RepositoryDataBroker>();
+        services.AddScoped<IDataBroker, ServerDataBroker>();
         services.AddScoped<IListRequestHandler, ListRequestServerHandler<InMemoryWeatherDbContext>>();
         services.AddScoped<IItemRequestHandler, ItemRequestServerHandler<InMemoryWeatherDbContext>>();
         services.AddScoped<IUpdateRequestHandler, UpdateRequestServerHandler<InMemoryWeatherDbContext>>();

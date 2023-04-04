@@ -1,4 +1,6 @@
-﻿namespace Blazr.Test;
+﻿using System.Reflection;
+
+namespace Blazr.Test;
 
 public static class ServiceContainers
 {
@@ -33,6 +35,10 @@ public static class ServiceContainers
         //Define the ILogger
         services.AddLogging(builder => builder.AddDebug());
 
+        // Reports
+        services.AddOptions<ReportServiceSettings>().Configure(options => options.ReportAssemblies = new List<Assembly> {
+            typeof(Blazr.App.Infrastructure.WeatherTestDataProvider).Assembly
+        });
         // Create the container
         return services.BuildServiceProvider();
     }

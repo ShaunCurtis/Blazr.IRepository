@@ -4,8 +4,11 @@
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
 
-namespace Blazr.Infrastructure;
+namespace Blazr.Core;
 
-public sealed class ReportService
+public interface IReportHandler<TReportRequest, TRecord>
+    where TReportRequest : IReportRequest
+    where TRecord : class, new()
 {
+    public ValueTask<ListQueryResult<TRecord>> ExecuteAsync(IReportRequest request);
 }

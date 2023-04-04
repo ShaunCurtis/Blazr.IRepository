@@ -4,9 +4,8 @@
 /// If you use it, donate something to a charity somewhere
 /// ============================================================
 
-namespace Blazr.Infrastructure;
+namespace Blazr.App.Infrastructure;
 
-[ReportHandler("WeatherForecastsFilteredBySummary")]
 public sealed class WeatherForecastsFilteredBySummaryRequestHandler<TDbContext>
     where TDbContext : DbContext
 {
